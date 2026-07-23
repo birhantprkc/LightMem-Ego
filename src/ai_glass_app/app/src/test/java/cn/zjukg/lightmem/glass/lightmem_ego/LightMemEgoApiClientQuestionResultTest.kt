@@ -62,6 +62,34 @@ class LightMemEgoApiClientQuestionResultTest {
     }
 
     @Test
+    fun topLevelAnswerAudioUrlIsAccepted() {
+        val result = LightMemEgoApiClient().parseQueryTaskResult(
+            JSONObject()
+                .put("status", "done")
+                .put("answer", "Done.")
+                .put("answer_audio_url", "/session/s1/file?path=stream/answer_audio/a.mp3"),
+        )
+
+        assertEquals("/session/s1/file?path=stream/answer_audio/a.mp3", result.answerAudioUrl)
+    }
+
+    @Test
+    fun nestedAnswerAudioUrlIsAccepted() {
+        val result = LightMemEgoApiClient().parseQueryTaskResult(
+            JSONObject()
+                .put("status", "done")
+                .put(
+                    "result",
+                    JSONObject()
+                        .put("answer", "Done.")
+                        .put("answer_audio_url", "/session/s1/file?path=stream/answer_audio/a.mp3"),
+                ),
+        )
+
+        assertEquals("/session/s1/file?path=stream/answer_audio/a.mp3", result.answerAudioUrl)
+    }
+
+    @Test
     fun legacyResponseFieldIsNotTreatedAsAnswer() {
         val result = LightMemEgoApiClient().parseQueryTaskResult(
             JSONObject()

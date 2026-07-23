@@ -53,6 +53,7 @@ data class LightMemEgoAudioQuestionSubmitResult(
     val queued: Boolean,
     val taskId: String,
     val answer: String,
+    val answerAudioUrl: String,
     val message: String,
 )
 
@@ -61,6 +62,7 @@ data class LightMemEgoAskSubmitResult(
     val queued: Boolean,
     val taskId: String,
     val answer: String,
+    val answerAudioUrl: String,
 )
 
 data class LightMemEgoStreamEvent(
@@ -69,6 +71,7 @@ data class LightMemEgoStreamEvent(
     val delta: String,
     val text: String,
     val answer: String,
+    val answerAudioUrl: String,
     val question: String,
     val message: String,
 )
@@ -76,6 +79,7 @@ data class LightMemEgoStreamEvent(
 data class LightMemEgoStreamResult(
     val status: String,
     val answer: String,
+    val answerAudioUrl: String,
     val question: String,
     val message: String,
 )
@@ -84,6 +88,7 @@ data class LightMemEgoAudioQuestionStreamResult(
     val status: String,
     val question: String,
     val answer: String,
+    val answerAudioUrl: String,
     val message: String,
 )
 
@@ -91,6 +96,7 @@ data class LightMemEgoQueryTaskResult(
     val status: String,
     val done: Boolean,
     val answer: String,
+    val answerAudioUrl: String,
     val message: String,
 )
 
@@ -364,6 +370,7 @@ class LightMemEgoApiClient(
             status = result.status,
             question = result.question,
             answer = result.answer,
+            answerAudioUrl = result.answerAudioUrl,
             message = result.message,
         )
     }
@@ -380,6 +387,7 @@ class LightMemEgoApiClient(
             queued = status == "queued" || taskId.isNotBlank(),
             taskId = taskId,
             answer = extractAnswer(json),
+            answerAudioUrl = extractAnswerAudioUrl(json),
         )
     }
 
@@ -393,6 +401,7 @@ class LightMemEgoApiClient(
             queued = status == "queued" || taskId.isNotBlank(),
             taskId = taskId,
             answer = extractAnswer(json),
+            answerAudioUrl = extractAnswerAudioUrl(json),
             message = json.optString("message"),
         )
     }
@@ -403,6 +412,7 @@ class LightMemEgoApiClient(
             status = status,
             done = status == "done",
             answer = extractAnswer(json),
+            answerAudioUrl = extractAnswerAudioUrl(json),
             message = json.optString("message"),
         )
     }
@@ -505,6 +515,7 @@ class LightMemEgoApiClient(
         val dataLines = mutableListOf<String>()
         var eventName = ""
         var finalAnswer = ""
+        var answerAudioUrl = ""
         var question = ""
         var status = ""
         var message = ""
@@ -524,6 +535,7 @@ class LightMemEgoApiClient(
                 "done" -> {
                     if (event.status.isNotBlank()) status = event.status
                     if (event.answer.isNotBlank()) finalAnswer = event.answer
+                    if (event.answerAudioUrl.isNotBlank()) answerAudioUrl = event.answerAudioUrl
                     if (event.message.isNotBlank()) message = event.message
                 }
                 "error" -> {
@@ -532,6 +544,7 @@ class LightMemEgoApiClient(
                 }
             }
             if (event.question.isNotBlank()) question = event.question
+            if (event.answerAudioUrl.isNotBlank()) answerAudioUrl = event.answerAudioUrl
             onEvent(event)
         }
 
@@ -554,6 +567,7 @@ class LightMemEgoApiClient(
         return LightMemEgoStreamResult(
             status = status.ifBlank { "ok" },
             answer = answer,
+            answerAudioUrl = answerAudioUrl,
             question = question,
             message = message,
         )
@@ -562,6 +576,7 @@ class LightMemEgoApiClient(
     private fun parseStreamEvent(eventName: String, json: JSONObject): LightMemEgoStreamEvent {
         val result = json.optJSONObject("result")
         val resultAnswer = result?.let { extractAnswer(it) }.orEmpty()
+        val answerAudioUrl = extractAnswerAudioUrl(json)
         val answer = json.firstNonBlankString("answer", "final_answer", "finalAnswer", "response", "text")
             ?: resultAnswer.takeIf { it.isNotBlank() }
             ?: ""
@@ -580,6 +595,7 @@ class LightMemEgoApiClient(
             delta = json.optString("delta"),
             text = text,
             answer = answer,
+            answerAudioUrl = answerAudioUrl,
             question = question,
             message = message,
         )
@@ -594,17 +610,21 @@ class LightMemEgoApiClient(
     }
 
     private fun openConnection(path: String, method: String): HttpURLConnection {
-        val joined = if (path.startsWith("http://") || path.startsWith("https://")) {
-            path
-        } else {
-            baseUrl.trimEnd('/') + path
-        }
+        val joined = resolveUrl(path)
         return (URL(joined).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 12_000
             readTimeout = LightMemEgoConfig.HTTP_READ_TIMEOUT_MS
             useCaches = false
             setRequestProperty("Accept", "application/json")
+        }
+    }
+
+    fun resolveUrl(path: String): String {
+        return if (path.startsWith("http://") || path.startsWith("https://")) {
+            path
+        } else {
+            baseUrl.trimEnd('/') + path
         }
     }
 
@@ -635,6 +655,13 @@ class LightMemEgoApiClient(
         val result = json.optJSONObject("result")
         return json.firstNonBlankString("answer")
             ?: result?.firstNonBlankString("answer")
+            ?: ""
+    }
+
+    private fun extractAnswerAudioUrl(json: JSONObject): String {
+        val result = json.optJSONObject("result")
+        return json.firstNonBlankString("answer_audio_url", "answerAudioUrl")
+            ?: result?.firstNonBlankString("answer_audio_url", "answerAudioUrl")
             ?: ""
     }
 
