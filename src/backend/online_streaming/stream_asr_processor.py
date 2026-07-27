@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from online_preprocess.asr_whisperx import WhisperXRuntime, transcribe_audio_with_whisperx
+from online_preprocess.asr_xfyun import transcribe_audio_with_xfyun
 from online_preprocess.extract_audio import extract_audio_wav
 from online_preprocess.io_utils import ffmpeg_bin, read_json, run_command, utc_now_iso
 from online_pipeline.audio_stream import AudioStreamStore
@@ -198,6 +199,55 @@ def _transcribe_audio_with_empty_window_guard(**kwargs: Any) -> tuple[list[dict[
         if _is_whisperx_empty_window_error(exc):
             return [], True
         raise
+
+
+def _transcribe_audio_with_backend(
+    *,
+    backend: str,
+    audio_path: Path,
+    output_srt: Path,
+    output_json: Path,
+    whisperx_model: str,
+    device: str,
+    compute_type: str,
+    language: str | None,
+    model_dir: str | None,
+    align_model_dir: str | None,
+    batch_size: int,
+    force: bool,
+    runtime: WhisperXRuntime | None,
+) -> tuple[list[dict[str, Any]], bool, str, str | None]:
+    backend_key = (backend or "whisperx").strip().lower()
+    whisperx_kwargs = {
+        "audio_path": audio_path,
+        "output_srt": output_srt,
+        "output_json": output_json,
+        "model_name": whisperx_model,
+        "device": device,
+        "compute_type": compute_type,
+        "language": language,
+        "model_dir": model_dir,
+        "align_model_dir": align_model_dir,
+        "batch_size": batch_size,
+        "force": force,
+        "runtime": runtime,
+    }
+    if backend_key in {"xfyun", "iflytek"}:
+        return (
+            transcribe_audio_with_xfyun(
+                audio_path=audio_path,
+                output_srt=output_srt,
+                output_json=output_json,
+                force=force,
+            ),
+            False,
+            "xfyun",
+            None,
+        )
+    if backend_key == "whisperx":
+        local_segments, no_audio = _transcribe_audio_with_empty_window_guard(**whisperx_kwargs)
+        return local_segments, no_audio, "whisperx", None
+    raise ValueError(f"Unsupported stream ASR backend: {backend}")
 
 
 def _transcode_audio_chunk_to_wav(input_path: Path, output_path: Path, *, force: bool = False) -> Path:
@@ -410,7 +460,7 @@ def _process_audio_window_asr_task(
     project_root: Path,
     session_dir: Path,
     task: dict[str, Any],
-    asr_runtime: WhisperXRuntime,
+    asr_runtime: WhisperXRuntime | None,
     whisperx_model: str,
     device: str,
     compute_type: str,
@@ -425,20 +475,24 @@ def _process_audio_window_asr_task(
     store = AudioStreamStore(session_dir)
     store.mark_asr_window_started(window_id)
     stream_id = str(task.get("stream_id") or "")
-    backend = (os.getenv("EM2MEM_AUDIO_ASR_BACKEND") or str(task.get("asr_backend") or "whisperx")).strip().lower()
+    backend = (os.getenv("EM2MEM_AUDIO_ASR_BACKEND") or str(task.get("asr_backend") or "xfyun")).strip().lower()
+    backend = "xfyun" if backend == "iflytek" else backend
     task = {**task, "asr_backend": backend}
     transcript_dir = session_dir / "stream" / "transcript" / window_id
     transcript_dir.mkdir(parents=True, exist_ok=True)
     no_audio = False
+    effective_backend = backend
+    fallback_error: str | None = None
     if backend == "mock":
         local_segments = _mock_audio_window_segments(task)
     else:
         audio_path = _build_audio_window_wav(session_dir, task, force=force)
-        local_segments, whisperx_no_audio = _transcribe_audio_with_empty_window_guard(
+        local_segments, no_audio, effective_backend, fallback_error = _transcribe_audio_with_backend(
+            backend=backend,
             audio_path=audio_path,
             output_srt=transcript_dir / "transcript.srt",
             output_json=transcript_dir / "transcript.json",
-            model_name=whisperx_model,
+            whisperx_model=whisperx_model,
             device=device,
             compute_type=compute_type,
             language=_auto_language(os.getenv("EM2MEM_AUDIO_ASR_LANGUAGE") or language),
@@ -448,8 +502,7 @@ def _process_audio_window_asr_task(
             force=force,
             runtime=asr_runtime,
         )
-        no_audio = whisperx_no_audio
-    segments = _globalize_audio_window_segments(task, local_segments)
+    segments = _globalize_audio_window_segments({**task, "asr_backend": effective_backend}, local_segments)
     if not segments and backend != "mock":
         no_audio = True
     partial_store = PartialTranscriptStore(session_dir)
@@ -483,7 +536,9 @@ def _process_audio_window_asr_task(
         "stream_id": stream_id,
         "source": "audio_chunk_window",
         "window_id": window_id,
-        "backend": backend,
+        "backend": effective_backend,
+        "requested_backend": backend,
+        "fallback_error": fallback_error,
         "no_audio": no_audio,
         "segment_count": len(segments),
         "partial_transcript_state": state,
@@ -493,12 +548,80 @@ def _process_audio_window_asr_task(
     }
 
 
+def _process_voice_question_asr_task(
+    *,
+    session_dir: Path,
+    task: dict[str, Any],
+    asr_runtime: WhisperXRuntime | None,
+    whisperx_model: str,
+    device: str,
+    compute_type: str,
+    language: str | None,
+    model_dir: str | None,
+    align_model_dir: str | None,
+    force: bool,
+) -> dict[str, Any]:
+    upload_rel = str(task.get("upload_chunk_path") or "")
+    if not upload_rel:
+        raise ValueError("voice_question stream_asr task missing upload_chunk_path")
+    audio_path = session_dir / upload_rel
+    if not audio_path.exists():
+        raise FileNotFoundError(f"voice question audio not found: {audio_path}")
+
+    output_json = audio_path.with_suffix(".json")
+    output_srt = audio_path.with_suffix(".srt")
+    backend = (str(task.get("asr_backend") or os.getenv("EM2MEM_VOICE_QUESTION_ASR_BACKEND") or "whisperx")).strip().lower()
+    backend = "xfyun" if backend == "iflytek" else backend
+    local_segments, no_audio, effective_backend, fallback_error = _transcribe_audio_with_backend(
+        backend=backend,
+        audio_path=audio_path,
+        output_srt=output_srt,
+        output_json=output_json,
+        whisperx_model=os.getenv("EM2MEM_VOICE_QUESTION_MODEL") or whisperx_model,
+        device=os.getenv("EM2MEM_VOICE_QUESTION_DEVICE") or device,
+        compute_type=os.getenv("EM2MEM_VOICE_QUESTION_COMPUTE_TYPE") or compute_type,
+        language=_auto_language(os.getenv("EM2MEM_VOICE_QUESTION_LANGUAGE") or language),
+        model_dir=os.getenv("EM2MEM_VOICE_QUESTION_MODEL_DIR") or model_dir,
+        align_model_dir=os.getenv("EM2MEM_VOICE_QUESTION_ALIGN_MODEL_DIR") or align_model_dir,
+        batch_size=int(os.getenv("EM2MEM_VOICE_QUESTION_BATCH_SIZE", os.getenv("EM2MEM_WHISPERX_BATCH_SIZE", "16")) or 16),
+        force=force,
+        runtime=asr_runtime,
+    )
+    segments = [
+        {
+            **dict(segment),
+            "session_id": session_dir.name,
+            "source": "voice_question",
+            "upload_chunk_id": str(task.get("upload_chunk_id") or ""),
+            "version": 1,
+            "created_at": utc_now_iso(),
+            "updated_at": utc_now_iso(),
+        }
+        for segment in local_segments
+        if isinstance(segment, dict)
+    ]
+    return {
+        "session_id": session_dir.name,
+        "stream_id": str(task.get("stream_id") or ""),
+        "source": "voice_question",
+        "upload_chunk_id": str(task.get("upload_chunk_id") or ""),
+        "backend": effective_backend,
+        "requested_backend": backend,
+        "fallback_error": fallback_error,
+        "no_audio": no_audio or not bool(segments),
+        "segment_count": len(segments),
+        "segments": segments,
+        "transcript_json": str(output_json.relative_to(session_dir)),
+        "transcript_srt": str(output_srt.relative_to(session_dir)),
+    }
+
+
 def process_stream_asr_task(
     *,
     project_root: Path,
     sessions_root: Path,
     task: dict[str, Any],
-    asr_runtime: WhisperXRuntime,
+    asr_runtime: WhisperXRuntime | None,
     whisperx_model: str,
     device: str,
     compute_type: str,
@@ -509,6 +632,19 @@ def process_stream_asr_task(
 ) -> dict[str, Any]:
     session_id = str(task.get("session_id") or "")
     session_dir = Path(sessions_root) / session_id
+    if str(task.get("source") or "") == "voice_question":
+        return _process_voice_question_asr_task(
+            session_dir=session_dir,
+            task=task,
+            asr_runtime=asr_runtime,
+            whisperx_model=whisperx_model,
+            device=device,
+            compute_type=compute_type,
+            language=language,
+            model_dir=model_dir,
+            align_model_dir=align_model_dir,
+            force=force,
+        )
     if str(task.get("source") or "") == "audio_chunk_window":
         return _process_audio_window_asr_task(
             project_root=Path(project_root),
@@ -528,7 +664,8 @@ def process_stream_asr_task(
     if not upload_path.exists():
         raise FileNotFoundError(f"stream upload chunk not found: {upload_path}")
 
-    backend = (os.getenv("EM2MEM_STREAM_ASR_BACKEND") or str(task.get("asr_backend") or "whisperx")).strip().lower()
+    backend = (os.getenv("EM2MEM_STREAM_ASR_BACKEND") or str(task.get("asr_backend") or "xfyun")).strip().lower()
+    backend = "xfyun" if backend == "iflytek" else backend
     stream_id = str(task.get("stream_id") or "")
     upload_chunk_id = str(task.get("upload_chunk_id") or f"upload_{int(task.get('upload_chunk_index', 0)):06d}")
     upload_chunk_index = int(task.get("upload_chunk_index", 0) or 0)
@@ -536,6 +673,8 @@ def process_stream_asr_task(
     transcript_dir.mkdir(parents=True, exist_ok=True)
 
     no_audio = False
+    effective_backend = backend
+    fallback_error: str | None = None
     if backend == "mock":
         local_or_global = _mock_segments(task)
         segments = [
@@ -566,11 +705,12 @@ def process_stream_asr_task(
                 has_audio=True,
                 force=force,
             )
-            local_segments, whisperx_no_audio = _transcribe_audio_with_empty_window_guard(
+            local_segments, no_audio, effective_backend, fallback_error = _transcribe_audio_with_backend(
+                backend=backend,
                 audio_path=audio_path,
                 output_srt=transcript_dir / "transcript.srt",
                 output_json=transcript_dir / "transcript.json",
-                model_name=whisperx_model,
+                whisperx_model=whisperx_model,
                 device=device,
                 compute_type=compute_type,
                 language=language,
@@ -580,8 +720,9 @@ def process_stream_asr_task(
                 force=force,
                 runtime=asr_runtime,
             )
-            no_audio = whisperx_no_audio
-            segments = _globalize_segments({**task, "asr_backend": "whisperx"}, local_segments)
+            segments = _globalize_segments({**task, "asr_backend": effective_backend}, local_segments)
+    if not segments and backend != "mock":
+        no_audio = True
 
     store = PartialTranscriptStore(session_dir)
     append_result = store.append_segments(
@@ -603,7 +744,9 @@ def process_stream_asr_task(
         "stream_id": stream_id,
         "upload_chunk_id": upload_chunk_id,
         "upload_chunk_index": upload_chunk_index,
-        "backend": backend,
+        "backend": effective_backend,
+        "requested_backend": backend,
+        "fallback_error": fallback_error,
         "no_audio": no_audio,
         "segment_count": len(segments),
         "partial_transcript_state": state,

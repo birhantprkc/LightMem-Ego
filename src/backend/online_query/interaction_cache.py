@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from online_query.frame_timestamps import frame_timestamp_seconds
 from online_preprocess.io_utils import read_json, utc_now_iso, write_json_atomic
 
 
@@ -41,19 +42,7 @@ def _canonical_segment_id(value: Any) -> str:
 
 
 def _normalize_frame_timestamp(value: Any, path: str | None = None) -> float | None:
-    try:
-        timestamp = float(value)
-    except Exception:
-        return None
-    path_text = str(path or "")
-    token = ""
-    if path_text:
-        match = re.search(r"kf_(\d{7,})(?:\D|$)", Path(path_text).stem)
-        token = match.group(1) if match else ""
-    is_stream_keyframe = "stream/keyframes" in path_text.replace("\\", "/")
-    if timestamp >= 1000.0 and (is_stream_keyframe or len(token) >= 7):
-        timestamp = timestamp / 1000.0
-    return round(timestamp, 3)
+    return frame_timestamp_seconds(value, path)
 
 
 def _cache_root_for_session(session_dir: Path) -> Path:

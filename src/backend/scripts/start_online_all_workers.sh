@@ -146,8 +146,10 @@ else
   echo "[start_online_all_workers] Main path: stream/live_ingest/preprocess -> M_cur/M_st -> MST refine -> MST consolidation -> memory -> visual -> query"
 fi
 
-start_worker preprocess bash scripts/start_online_worker.sh
-echo "[start_online_all_workers] preprocess worker also consumes stream_asr tasks with the same warm WhisperXRuntime"
+start_worker preprocess env EM2MEM_PREPROCESS_CONSUME_STREAM_ASR="${EM2MEM_PREPROCESS_CONSUME_STREAM_ASR:-0}" bash scripts/start_online_worker.sh
+start_worker asr env CUDA_VISIBLE_DEVICES="${EM2MEM_ASR_CUDA_VISIBLE_DEVICES:-1}" bash scripts/start_online_asr_worker.sh --worker-name asr --task-filter voice_question --device "${EM2MEM_ASR_WHISPERX_DEVICE:-cuda}"
+start_worker asr_stream env CUDA_VISIBLE_DEVICES="${EM2MEM_STREAM_ASR_CUDA_VISIBLE_DEVICES:-2}" bash scripts/start_online_asr_worker.sh --worker-name asr_stream --task-filter stream --device "${EM2MEM_STREAM_ASR_WHISPERX_DEVICE:-cuda}"
+echo "[start_online_all_workers] dedicated asr workers split voice-question tasks from background stream ASR tasks"
 
 if [[ "$PIPELINE_MODE" != "legacy" ]]; then
   start_worker stream bash scripts/start_online_stream_worker.sh
@@ -199,12 +201,12 @@ if [[ "${EM2MEM_TEXT_EMBED_BACKEND:-local}" == "remote" ]]; then
 fi
 
 if is_enabled "${EM2MEM_AUTO_VISUAL_EMBEDDING:-1}"; then
-  start_worker visual bash scripts/start_online_visual_worker.sh
+start_worker visual bash scripts/start_online_visual_worker.sh
 else
   echo "[start_online_all_workers] Visual embedding worker: disabled by EM2MEM_AUTO_VISUAL_EMBEDDING=0"
 fi
 start_worker memory bash scripts/start_online_memory_worker.sh
-CUDA_VISIBLE_DEVICES=1 start_worker rokid_day_merge bash scripts/start_online_rokid_day_merge_worker.sh
+start_worker rokid_day_merge bash scripts/start_online_rokid_day_merge_worker.sh
 CUDA_VISIBLE_DEVICES=3 start_worker query bash scripts/start_online_query_worker.sh
 
 echo "[start_online_all_workers] started. Monitor with: python monitor_online_pipeline.py --watch"

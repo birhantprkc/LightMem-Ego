@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from online_short_term.micro_event_refiner import MicroEventRefiner
+from online_short_term.refine_lease import acquire_refine_event_lease
 from online_short_term.mst_store import MSTStore
 from online_short_term.refine_status import write_refine_status
-from online_short_term.schemas import DEFAULT_SESSIONS_ROOT
+from online_short_term.schemas import DEFAULT_SESSIONS_ROOT, build_retrieval_text
 
 
 def _env_int(name: str, default: int) -> int:
@@ -108,6 +109,62 @@ def _select_events(
     return selected
 
 
+def _load_event_by_id(store: MSTStore, event_id: str) -> dict[str, Any] | None:
+    event_id = str(event_id or "")
+    for events in (store.load_archive_events(), store.load_events()):
+        for event in events:
+            if str(event.get("event_id") or "") == event_id:
+                return event
+    return None
+
+
+_REFINE_RESULT_FIELDS = {
+    "event_caption_refined",
+    "visual_objects",
+    "main_actions",
+    "state_changes",
+    "entities",
+    "confidence",
+    "caption_source",
+    "refine_completed_at",
+    "refine_speed",
+    "refine",
+}
+
+
+def _merge_refine_result(
+    source_event: dict[str, Any],
+    latest_event: dict[str, Any],
+    refined_event: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply model output without overwriting transcript updates made in flight."""
+
+    merged = dict(latest_event)
+    for field in _REFINE_RESULT_FIELDS:
+        if field in refined_event:
+            merged[field] = refined_event[field]
+
+    source_transcript_version = int(source_event.get("transcript_version", 0) or 0)
+    latest_transcript_version = int(latest_event.get("transcript_version", 0) or 0)
+    transcript_changed = latest_transcript_version != source_transcript_version
+    if str(refined_event.get("status") or "") == "refine_failed":
+        merged["status"] = "refine_failed"
+        merged["needs_refine"] = True
+    else:
+        merged["status"] = "refined"
+        merged["needs_refine"] = bool(transcript_changed)
+        merged["refined_stale"] = bool(transcript_changed)
+        merged["stale_reason"] = "transcript_changed_during_refine" if transcript_changed else None
+
+    merged["version"] = max(
+        int(latest_event.get("version", 1) or 1) + 1,
+        int(refined_event.get("version", 1) or 1),
+    )
+    merged["updated_at"] = refined_event.get("updated_at") or latest_event.get("updated_at")
+    merged["retrieval_text"] = build_retrieval_text(merged)
+    return merged
+
+
 def refine_session(
     *,
     session_id: str,
@@ -127,9 +184,10 @@ def refine_session(
 ) -> dict:
     session_dir = sessions_root / session_id
     store = MSTStore(session_dir)
-    source_events = store.load_events() if only_active else store.load_archive_events()
-    if not source_events and not only_archive:
-        source_events = store.load_events()
+    with store.mutation_lock():
+        source_events = store.load_events() if only_active else store.load_archive_events()
+        if not source_events and not only_archive:
+            source_events = store.load_events()
     selected = _select_events(
         source_events,
         event_id=event_id,
@@ -138,48 +196,94 @@ def refine_session(
         force_refine=force_refine,
     )
     refined = []
+    skipped_already_refined: list[str] = []
+    skipped_lease_timeout: list[str] = []
+    update_results: list[dict[str, bool]] = []
     max_concurrency = max(1, int(os.getenv("EM2MEM_REFINE_MAX_CONCURRENCY", "1") or 1))
 
-    def _refine_one(event: dict) -> dict:
-        return MicroEventRefiner(backend=backend).refine_event(
-            event,
-            session_dir,
-            task_id=task_id,
-            task_queued_at=task_queued_at,
-            task_worker_started_at=task_worker_started_at,
-            task_reason=task_reason,
+    def _refine_one(event: dict) -> tuple[str, str, dict[str, Any] | None, dict[str, bool] | None]:
+        event_id_value = str(event.get("event_id") or "")
+        lease_owner = f"{task_id or 'manual'}:{event_id_value}"
+        lease_wait_seconds = (
+            _env_float("EM2MEM_MST_REFINE_FORCE_LEASE_WAIT_SECONDS", 150.0)
+            if force_refine
+            else _env_float("EM2MEM_MST_REFINE_LEASE_WAIT_SECONDS", 2.0)
         )
+        with acquire_refine_event_lease(
+            session_dir,
+            event_id_value,
+            owner=lease_owner,
+            wait_seconds=lease_wait_seconds,
+        ) as lease:
+            if lease is None:
+                return "lease_timeout", event_id_value, None, None
 
-    if max_concurrency > 1 and len(selected) > 1:
-        ordered: list[dict | None] = [None] * len(selected)
-        with ThreadPoolExecutor(max_workers=min(max_concurrency, len(selected))) as executor:
-            futures = {executor.submit(_refine_one, event): idx for idx, event in enumerate(selected)}
-            for future in as_completed(futures):
-                idx = futures[future]
-                updated = future.result()
-                ordered[idx] = updated
-                if verbose:
-                    print(f"[mst_refine] {updated.get('event_id')} status={updated.get('status')} source={updated.get('caption_source')}")
-        refined = [item for item in ordered if item is not None]
-    else:
-        for event in selected:
-            updated = _refine_one(event)
+            with store.mutation_lock():
+                latest = _load_event_by_id(store, event_id_value)
+            if latest is None:
+                return "missing", event_id_value, None, None
+
+            selected_version = int(event.get("version", 1) or 1)
+            latest_version = int(latest.get("version", 1) or 1)
+            completed_by_other_task = (
+                latest_version > selected_version
+                and not latest.get("needs_refine")
+                and not latest.get("refined_stale")
+                and str(latest.get("status") or "") in {"refined", "final"}
+            )
+            if completed_by_other_task or (not force_refine and not is_auto_refine_eligible(latest)):
+                return "already_refined", event_id_value, None, None
+
+            updated = MicroEventRefiner(backend=backend).refine_event(
+                latest,
+                session_dir,
+                task_id=task_id,
+                task_queued_at=task_queued_at,
+                task_worker_started_at=task_worker_started_at,
+                task_reason=task_reason,
+            )
+            with store.mutation_lock():
+                latest_before_write = _load_event_by_id(store, event_id_value) or latest
+                persisted = _merge_refine_result(latest, latest_before_write, updated)
+                if only_active:
+                    active = store._merge_by_event_id(store.load_events(), [persisted])
+                    store.save_events(active)
+                    update_result = {"active_updated": True, "archive_updated": False}
+                elif only_archive:
+                    archive = store._merge_by_event_id(store.load_archive_events(), [persisted])
+                    store.save_archive_events(archive, bump_version=True)
+                    update_result = {"active_updated": False, "archive_updated": True}
+                else:
+                    update_result = store.update_events([persisted])
+            return "refined", event_id_value, persisted, update_result
+
+    def _record_result(result: tuple[str, str, dict[str, Any] | None, dict[str, bool] | None]) -> None:
+        status, event_id_value, updated, update_result = result
+        if status == "refined" and updated is not None:
             refined.append(updated)
+            if update_result is not None:
+                update_results.append(update_result)
             if verbose:
                 print(f"[mst_refine] {updated.get('event_id')} status={updated.get('status')} source={updated.get('caption_source')}")
-    update_result = {"active_updated": False, "archive_updated": False}
-    if refined:
-        if only_active:
-            active = store._merge_by_event_id(store.load_events(), refined)
-            store.save_events(active)
-            update_result = {"active_updated": True, "archive_updated": False}
-        elif only_archive:
-            archive = store._merge_by_event_id(store.load_archive_events(), refined)
-            store.save_archive_events(archive, bump_version=True)
-            update_result = {"active_updated": False, "archive_updated": True}
-        else:
-            update_result = store.update_events(refined)
-    windows_path, refine_state_path = write_refine_status(store)
+        elif status == "already_refined" and updated is None:
+            skipped_already_refined.append(event_id_value)
+        elif status == "lease_timeout":
+            skipped_lease_timeout.append(event_id_value)
+
+    if max_concurrency > 1 and len(selected) > 1:
+        with ThreadPoolExecutor(max_workers=min(max_concurrency, len(selected))) as executor:
+            futures = [executor.submit(_refine_one, event) for event in selected]
+            for future in as_completed(futures):
+                _record_result(future.result())
+    else:
+        for event in selected:
+            _record_result(_refine_one(event))
+    update_result = {
+        "active_updated": any(item.get("active_updated") for item in update_results),
+        "archive_updated": any(item.get("archive_updated") for item in update_results),
+    }
+    with store.mutation_lock():
+        windows_path, refine_state_path = write_refine_status(store)
     return {
         "session_id": session_id,
         "backend": backend,
@@ -187,6 +291,10 @@ def refine_session(
         "refined_event_count": len(refined),
         "selected_event_ids": [event.get("event_id") for event in selected],
         "refined_event_ids": [event.get("event_id") for event in refined if event.get("status") in {"refined", "final"}],
+        "skipped_already_refined_count": len(skipped_already_refined),
+        "skipped_already_refined_ids": skipped_already_refined,
+        "skipped_lease_timeout_count": len(skipped_lease_timeout),
+        "skipped_lease_timeout_ids": skipped_lease_timeout,
         "max_concurrency": max_concurrency,
         "update_result": update_result,
         "mst_state": store.get_state(),

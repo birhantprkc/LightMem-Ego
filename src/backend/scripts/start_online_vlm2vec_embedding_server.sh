@@ -16,6 +16,11 @@ if [[ -f ".env" ]]; then
   set +a
 fi
 
+if [[ "${EM2MEM_AUTO_VISUAL_EMBEDDING:-1}" =~ ^(0|false|FALSE|no|NO|off|OFF)$ ]]; then
+  echo "[start_online_vlm2vec_embedding_server] Visual embedding disabled by EM2MEM_AUTO_VISUAL_EMBEDDING=0; not starting VLM2Vec embedding service"
+  exit 0
+fi
+
 export EM2MEM_ALLOW_HF_DOWNLOAD="${EM2MEM_ALLOW_HF_DOWNLOAD:-0}"
 if [[ "${EM2MEM_ALLOW_HF_DOWNLOAD}" != "1" ]]; then
   export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"

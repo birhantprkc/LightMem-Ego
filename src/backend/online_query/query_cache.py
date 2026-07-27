@@ -17,6 +17,15 @@ class SessionEngineCache:
         self.ttl_seconds = ttl_seconds
         self._items: OrderedDict[str, LoadedQueryEngine] = OrderedDict()
         self._lock = threading.RLock()
+        self._load_locks: dict[str, threading.Lock] = {}
+
+    def _load_lock(self, cache_key: str) -> threading.Lock:
+        with self._lock:
+            lock = self._load_locks.get(cache_key)
+            if lock is None:
+                lock = threading.Lock()
+                self._load_locks[cache_key] = lock
+            return lock
 
     def _close_engine(self, engine: LoadedQueryEngine) -> None:
         try:
@@ -60,35 +69,40 @@ class SessionEngineCache:
     ) -> tuple[LoadedQueryEngine, bool, int]:
         scheme = normalize_long_term_retrieval_scheme(long_term_retrieval_scheme)
         cache_key = retrieval_scheme_cache_key(session_id, scheme)
-        with self._lock:
-            self._evict_expired_locked()
-            engine = self._items.get(cache_key)
-            if engine is not None:
-                if engine.needs_reload():
-                    old_engine = self._items.pop(cache_key)
-                    self._close_engine(old_engine)
-                    print(
-                        f"[query_cache] reloading session={session_id} scheme={scheme} because memory_config changed",
-                        flush=True,
-                    )
-                    engine = None
-                else:
-                    engine.touch()
-                    self._items.move_to_end(cache_key)
-                    return engine, True, 0
-        start = time.perf_counter()
-        engine = loader(session_id)
-        engine_load_ms = int(round((time.perf_counter() - start) * 1000))
+        # Only one thread may build/reload a given session+retrieval engine.
+        # Waiters re-check the cache after acquiring the lock and reuse the
+        # engine produced by the first loader.
+        with self._load_lock(cache_key):
+            with self._lock:
+                self._evict_expired_locked()
+                engine = self._items.get(cache_key)
+                if engine is not None:
+                    if engine.needs_reload():
+                        old_engine = self._items.pop(cache_key)
+                        self._close_engine(old_engine)
+                        print(
+                            f"[query_cache] reloading session={session_id} scheme={scheme} because memory_config changed",
+                            flush=True,
+                        )
+                        engine = None
+                    else:
+                        engine.touch()
+                        self._items.move_to_end(cache_key)
+                        return engine, True, 0
 
-        with self._lock:
-            old_engine = self._items.pop(cache_key, None)
-            if old_engine is not None and old_engine is not engine:
-                self._close_engine(old_engine)
-            self._items[cache_key] = engine
-            self._items.move_to_end(cache_key)
-            self._evict_expired_locked()
-            self._evict_lru_locked()
-        return engine, False, engine_load_ms
+            start = time.perf_counter()
+            engine = loader(session_id)
+            engine_load_ms = int(round((time.perf_counter() - start) * 1000))
+
+            with self._lock:
+                old_engine = self._items.pop(cache_key, None)
+                if old_engine is not None and old_engine is not engine:
+                    self._close_engine(old_engine)
+                self._items[cache_key] = engine
+                self._items.move_to_end(cache_key)
+                self._evict_expired_locked()
+                self._evict_lru_locked()
+            return engine, False, engine_load_ms
 
     def reload_changed(
         self,

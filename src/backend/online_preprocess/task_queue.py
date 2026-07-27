@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import fcntl
 import re
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 from uuid import uuid4
 
 from .io_utils import ensure_dir, read_json, utc_now_iso, write_json_atomic
@@ -12,6 +15,20 @@ def _active_session_helpers():
     from online_pipeline.active_session import abort_task_file, task_belongs_to_inactive_session
 
     return abort_task_file, task_belongs_to_inactive_session
+
+
+@contextmanager
+def _queue_enqueue_lock(project_root: Path, queue_name: str, session_id: str) -> Iterator[None]:
+    lock_dir = Path(project_root) / TASKS_ROOT_NAME / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    safe_session_id = re.sub(r"[^A-Za-z0-9_.-]", "_", str(session_id or ""))
+    lock_path = lock_dir / f"{queue_name}_{safe_session_id}.lock"
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 CURRENT_QUERY_KEYWORDS = [
@@ -418,8 +435,10 @@ def enqueue_query_task(
     retrieval_scheme: str | None = None,
     client_source: str = "unknown",
     input_method: str = "unknown",
+    answer_tts: bool = False,
     allow_inactive_session: bool = False,
     task_source: str = "api",
+    response_mode: str = "async",
 ) -> Path:
     dirs = ensure_queue_dirs(project_root)
     task_id = f"{session_id}_{uuid4().hex[:8]}"
@@ -436,6 +455,13 @@ def enqueue_query_task(
         use_short_term=use_short_term,
         use_long_term=use_long_term,
     )
+    response_mode = str(response_mode or "async").strip().lower()
+    stream_events_path = None
+    if response_mode in {"stream", "streaming", "progressive"}:
+        response_mode = "stream"
+        priority = 0
+        priority_reason = "stream"
+        stream_events_path = f"online_tasks/query_stream_events/{task_id}.jsonl"
     write_json_atomic(
         task_path,
         {
@@ -463,7 +489,10 @@ def enqueue_query_task(
             "retrieval_scheme": retrieval_scheme,
             "client_source": client_source,
             "input_method": input_method,
+            "answer_tts": bool(answer_tts),
             "allow_inactive_session": bool(allow_inactive_session),
+            "response_mode": response_mode,
+            "stream_events_path": stream_events_path,
             "priority": priority,
             "query_priority_reason": priority_reason,
             "status": "queued",
@@ -620,51 +649,52 @@ def enqueue_mst_refine_task(
     force_refine: bool = False,
     reason: str | None = None,
 ) -> Path:
-    normalized_event_ids = _normalize_event_ids(event_id=event_id, event_ids=event_ids)
-    if normalized_event_ids and not event_id:
-        merged = _merge_mst_refine_batch_task(
+    with _queue_enqueue_lock(project_root, "mst_refine", session_id):
+        normalized_event_ids = _normalize_event_ids(event_id=event_id, event_ids=event_ids)
+        if normalized_event_ids and not event_id:
+            merged = _merge_mst_refine_batch_task(
+                project_root,
+                session_id=session_id,
+                backend=backend,
+                limit_events=max(int(limit_events or 0), len(normalized_event_ids)),
+                force_refine=force_refine,
+                reason=reason,
+                event_ids=normalized_event_ids,
+            )
+            if merged is not None:
+                return merged
+        if event_id and reason:
+            existing = _find_existing_task(
+                project_root,
+                keys=("mst_refine_queued", "mst_refine_in_progress"),
+                session_id=session_id,
+                task_type="mst_refine",
+                match_fields={"event_id": event_id, "reason": reason},
+            )
+            if existing is not None:
+                return existing
+        elif reason and not force_refine and not normalized_event_ids:
+            existing = _find_existing_task(
+                project_root,
+                keys=("mst_refine_queued", "mst_refine_in_progress"),
+                session_id=session_id,
+                task_type="mst_refine",
+                match_fields={"event_id": None, "force_refine": False, "reason": reason},
+            )
+            if existing is not None:
+                return existing
+        return _enqueue_task(
             project_root,
-            session_id=session_id,
+            "mst_refine_queued",
+            "mst_refine",
+            session_id,
             backend=backend,
             limit_events=max(int(limit_events or 0), len(normalized_event_ids)),
+            event_id=event_id,
+            event_ids=normalized_event_ids or None,
             force_refine=force_refine,
             reason=reason,
-            event_ids=normalized_event_ids,
         )
-        if merged is not None:
-            return merged
-    if event_id and reason:
-        existing = _find_existing_task(
-            project_root,
-            keys=("mst_refine_queued", "mst_refine_in_progress"),
-            session_id=session_id,
-            task_type="mst_refine",
-            match_fields={"event_id": event_id, "reason": reason},
-        )
-        if existing is not None:
-            return existing
-    elif reason and not force_refine:
-        existing = _find_existing_task(
-            project_root,
-            keys=("mst_refine_queued",),
-            session_id=session_id,
-            task_type="mst_refine",
-            match_fields={"event_id": None, "reason": reason},
-        )
-        if existing is not None:
-            return existing
-    return _enqueue_task(
-        project_root,
-        "mst_refine_queued",
-        "mst_refine",
-        session_id,
-        backend=backend,
-        limit_events=max(int(limit_events or 0), len(normalized_event_ids)),
-        event_id=event_id,
-        event_ids=normalized_event_ids or None,
-        force_refine=force_refine,
-        reason=reason,
-    )
 
 
 def enqueue_mst_consolidation_task(
@@ -906,7 +936,7 @@ def enqueue_stream_asr_task(
     processing_chunks: list[dict] | None = None,
     global_start_time: float | None = None,
     global_end_time: float | None = None,
-    asr_backend: str = "whisperx",
+    asr_backend: str = "xfyun",
     reason: str = "stream_upload_chunk",
     force: bool = False,
     retry_failed: bool = False,
@@ -920,8 +950,12 @@ def enqueue_stream_asr_task(
     asr_window_path: str | None = None,
     input_source: str | None = None,
     is_flush: bool = False,
+    priority: int | None = None,
 ) -> Path:
-    if not force:
+    source_name = str(source or "").strip().lower()
+    reason_name = str(reason or "").strip().lower()
+    is_voice_question = source_name == "voice_question" or reason_name == "voice_question"
+    if not force and not is_voice_question:
         existing = _find_existing_stream_asr_task(
             project_root,
             session_id=session_id,
@@ -938,18 +972,26 @@ def enqueue_stream_asr_task(
         start = min(float(item.get("start_time", 0.0) or 0.0) for item in chunks)
     if end is None and chunks:
         end = max(float(item.get("end_time", 0.0) or 0.0) for item in chunks)
-    previous_failed = _find_existing_stream_asr_task(
-        project_root,
-        session_id=session_id,
-        upload_chunk_index=upload_chunk_index,
-        window_id=window_id,
-        include_failed=True,
-    )
     retry_count = 0
-    if previous_failed is not None and previous_failed.parent.name == STREAM_ASR_FAILED_QUEUE_NAME:
-        payload = read_json(previous_failed, default={})
-        if isinstance(payload, dict):
-            retry_count = int(payload.get("retry_count", 0) or 0) + 1
+    if not is_voice_question:
+        previous_failed = _find_existing_stream_asr_task(
+            project_root,
+            session_id=session_id,
+            upload_chunk_index=upload_chunk_index,
+            window_id=window_id,
+            include_failed=True,
+        )
+        if previous_failed is not None and previous_failed.parent.name == STREAM_ASR_FAILED_QUEUE_NAME:
+            payload = read_json(previous_failed, default={})
+            if isinstance(payload, dict):
+                retry_count = int(payload.get("retry_count", 0) or 0) + 1
+    task_priority = priority
+    if task_priority is None:
+        task_priority = (
+            0
+            if source_name == "voice_question" or reason_name == "voice_question"
+            else 5
+        )
     return _enqueue_task(
         project_root,
         "stream_asr_queued",
@@ -974,7 +1016,9 @@ def enqueue_stream_asr_task(
         asr_window_path=asr_window_path or output_audio_path,
         input_source=input_source,
         is_flush=bool(is_flush),
+        force=bool(force),
         retry_count=retry_count,
+        priority=int(task_priority),
     )
 
 
@@ -1083,7 +1127,35 @@ def list_queued_stream_chunk_tasks(project_root: Path) -> list[Path]:
 
 def list_queued_stream_asr_tasks(project_root: Path) -> list[Path]:
     dirs = ensure_queue_dirs(project_root)
-    return sorted(dirs["stream_asr_queued"].glob("*.json"), key=lambda p: p.stat().st_mtime)
+    def _sort_key(path: Path) -> tuple[int, float] | None:
+        try:
+            mtime = path.stat().st_mtime
+        except FileNotFoundError:
+            return None
+        priority = 10
+        try:
+            payload = read_json(path, default={})
+        except FileNotFoundError:
+            return None
+        if isinstance(payload, dict):
+            try:
+                priority = int(payload.get("priority"))
+            except Exception:
+                source = str(payload.get("source") or "")
+                reason = str(payload.get("reason") or "")
+                priority = (
+                    0
+                    if source.strip().lower() == "voice_question" or reason.strip().lower() == "voice_question"
+                    else 5
+                )
+        return priority, mtime
+
+    sortable_paths: list[tuple[tuple[int, float], Path]] = []
+    for path in dirs["stream_asr_queued"].glob("*.json"):
+        sort_key = _sort_key(path)
+        if sort_key is not None:
+            sortable_paths.append((sort_key, path))
+    return [path for _, path in sorted(sortable_paths, key=lambda item: item[0])]
 
 
 def enqueue_live_ingest_task(
@@ -1186,7 +1258,11 @@ def list_queued_live_ingest_tasks(project_root: Path) -> list[Path]:
 
 def _claim_task_to(project_root: Path, task_path: Path, in_progress_key: str) -> tuple[Path, dict] | None:
     dirs = ensure_queue_dirs(project_root)
-    task = read_json(task_path, default=None)
+    try:
+        task = read_json(task_path, default=None)
+    except FileNotFoundError:
+        # Another worker may have claimed the task after it was listed.
+        return None
     if not isinstance(task, dict):
         return None
     if str(task.get("task_type") or "") != "rokid_day_merge":
@@ -1228,7 +1304,17 @@ def claim_visual_task(project_root: Path, task_path: Path) -> tuple[Path, dict] 
 
 
 def claim_mst_refine_task(project_root: Path, task_path: Path) -> tuple[Path, dict] | None:
-    return _claim_task_to(project_root, task_path, "mst_refine_in_progress")
+    try:
+        task = read_json(task_path, default=None)
+    except FileNotFoundError:
+        return None
+    if not isinstance(task, dict):
+        return None
+    session_id = str(task.get("session_id") or "")
+    with _queue_enqueue_lock(project_root, "mst_refine", session_id):
+        if not task_path.exists():
+            return None
+        return _claim_task_to(project_root, task_path, "mst_refine_in_progress")
 
 
 def claim_mst_consolidation_task(project_root: Path, task_path: Path) -> tuple[Path, dict] | None:

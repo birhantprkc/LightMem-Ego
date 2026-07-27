@@ -1,29 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PYTHON_WORKER_RE='(^|[[:space:]/])python([0-9.]*)?[[:space:]]+([^[:space:]]+[[:space:]]+)*online_(worker|stream_worker|live_ingest_worker|evidence_worker|mst_refine_worker|mst_consolidation_worker|visual_worker|memory_worker|query_worker|rokid_day_merge_worker)\.py([[:space:]]|$)'
+PYTHON_WORKER_RE='(^|[[:space:]/])python([0-9.]*)?[[:space:]]+([^[:space:]]+[[:space:]]+)*online_(worker|asr_worker|stream_worker|live_ingest_worker|evidence_worker|mst_refine_worker|mst_consolidation_worker|visual_worker|memory_worker|query_worker|rokid_day_merge_worker)\.py([[:space:]]|$)'
+WORKER_WRAPPER_RE='(^|[[:space:]/])(bash|sh)[[:space:]]+([^[:space:]]+[[:space:]]+)*scripts/(start_online_worker|start_online_asr_worker|start_online_stream_worker|start_online_live_ingest_worker|start_online_evidence_worker|start_online_mst_refine_worker|start_online_mst_consolidation_worker|start_online_visual_worker|start_online_memory_worker|start_online_query_worker|start_online_rokid_day_merge_worker)\.sh([[:space:]]|$)'
 UVICORN_RE='(^|[[:space:]/])python([0-9.]*)?[[:space:]]+-m[[:space:]]+uvicorn[[:space:]]+api_server:app([[:space:]]|$)|(^|[[:space:]/])uvicorn[[:space:]]+api_server:app([[:space:]]|$)'
-WRAPPER_RE='(^|[[:space:]/])(bash|sh)[[:space:]]+([^[:space:]]+[[:space:]]+)*scripts/(start_api|start_online_worker|start_online_stream_worker|start_online_live_ingest_worker|start_online_evidence_worker|start_online_mst_refine_worker|start_online_mst_consolidation_worker|start_online_visual_worker|start_online_memory_worker|start_online_query_worker|start_online_rokid_day_merge_worker)\.sh([[:space:]]|$)'
-PATTERN="${PYTHON_WORKER_RE}|${UVICORN_RE}|${WRAPPER_RE}"
+API_WRAPPER_RE='(^|[[:space:]/])(bash|sh)[[:space:]]+([^[:space:]]+[[:space:]]+)*scripts/start_api\.sh([[:space:]]|$)'
+WORKER_PATTERN="${PYTHON_WORKER_RE}|${WORKER_WRAPPER_RE}"
+API_PATTERN="${UVICORN_RE}|${API_WRAPPER_RE}"
 PROTECTED_PATTERN='scripts/start_online_vlm2vec_embedding_server.sh|online_vlm2vec_embedding_server.py|scripts/start_online_qwen3_embedding_server.sh|online_qwen3_embedding_server.py'
 TIMEOUT_SECONDS=8
 DRY_RUN=0
 FORCE=0
 START_AFTER_STOP=1
+RESTART_API=1
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/stop_online_backend_processes.sh [--dry-run] [--force] [--timeout SECONDS] [--no-start]
+Usage: scripts/stop_server_and_workers.sh [--dry-run] [--force] [--timeout SECONDS] [--keep-api] [--no-start]
 
-Stops lightmem_ego backend API and online worker processes matched by pgrep, then starts
-scripts/start_online_all_workers.sh and scripts/start_api.sh.
+Stops all online workers and, by default, the main api_server process. It then starts
+scripts/start_online_all_workers.sh and, unless --keep-api is set, scripts/start_api.sh.
 The VLM2Vec and Qwen3 embedding APIs are protected and are not stopped by this script.
 
 Options:
   --dry-run          Show matching processes without stopping them.
   --force           Send SIGKILL to processes that do not exit after timeout.
+  --keep-api        Keep the main api_server process running and restart workers only.
   --no-start         Stop matching processes without starting services again.
   --timeout SECONDS Wait this many seconds after normal kill before checking.
   -h, --help        Show this help.
@@ -32,15 +36,19 @@ EOF
 
 start_services() {
   if [[ "$START_AFTER_STOP" != "1" ]]; then
-    echo "[stop_online_backend_processes] --no-start was set; services were not restarted."
+    echo "[stop_server_and_workers] --no-start was set; services were not restarted."
     exit 0
   fi
 
   cd "$ROOT_DIR"
-  echo "[stop_online_backend_processes] Starting workers with scripts/start_online_all_workers.sh..."
+  echo "[stop_server_and_workers] Starting workers with scripts/start_online_all_workers.sh..."
   bash scripts/start_online_all_workers.sh
-  echo "[stop_online_backend_processes] Starting API with scripts/start_api.sh..."
-  bash scripts/start_api.sh
+  if [[ "$RESTART_API" == "1" ]]; then
+    echo "[stop_server_and_workers] Starting main API with scripts/start_api.sh..."
+    bash scripts/start_api.sh
+  else
+    echo "[stop_server_and_workers] Main API was kept running; not starting a second instance."
+  fi
   exit 0
 }
 
@@ -87,7 +95,10 @@ is_target_pid() {
   local cmdline
   cmdline="$(ps -o command= -p "$pid" 2>/dev/null || true)"
   [[ -n "$cmdline" ]] || return 1
-  [[ "$cmdline" =~ $PYTHON_WORKER_RE || "$cmdline" =~ $UVICORN_RE || "$cmdline" =~ $WRAPPER_RE ]]
+  if [[ "$cmdline" =~ $PYTHON_WORKER_RE || "$cmdline" =~ $WORKER_WRAPPER_RE ]]; then
+    return 0
+  fi
+  [[ "$RESTART_API" == "1" && ( "$cmdline" =~ $UVICORN_RE || "$cmdline" =~ $API_WRAPPER_RE ) ]]
 }
 
 is_protected_runtime_path() {
@@ -131,12 +142,19 @@ collect_target_pids() {
 
   TARGET_PIDS=()
 
-  mapfile -t MATCHED_PIDS < <(pgrep -f "$PATTERN" || true)
+  mapfile -t MATCHED_PIDS < <(pgrep -f "$WORKER_PATTERN" || true)
   for pid in "${MATCHED_PIDS[@]}"; do
     add_pid "$pid"
   done
 
-  for pid_path in "$ROOT_DIR"/runtime/api/*.pid "$ROOT_DIR"/runtime/workers/*.pid; do
+  if [[ "$RESTART_API" == "1" ]]; then
+    mapfile -t MATCHED_API_PIDS < <(pgrep -f "$API_PATTERN" || true)
+    for pid in "${MATCHED_API_PIDS[@]}"; do
+      add_pid "$pid"
+    done
+  fi
+
+  for pid_path in "$ROOT_DIR"/runtime/workers/*.pid; do
     [[ -f "$pid_path" ]] || continue
     if is_protected_runtime_path "$pid_path"; then
       continue
@@ -144,6 +162,14 @@ collect_target_pids() {
     pid="$(cat "$pid_path" 2>/dev/null || true)"
     add_pid "$pid"
   done
+
+  if [[ "$RESTART_API" == "1" ]]; then
+    for pid_path in "$ROOT_DIR"/runtime/api/*.pid; do
+      [[ -f "$pid_path" ]] || continue
+      pid="$(cat "$pid_path" 2>/dev/null || true)"
+      add_pid "$pid"
+    done
+  fi
 
   for runtime_path in "$ROOT_DIR"/runtime/workers/*.json; do
     [[ -f "$runtime_path" ]] || continue
@@ -183,13 +209,17 @@ while [[ $# -gt 0 ]]; do
       FORCE=1
       shift
       ;;
+    --keep-api)
+      RESTART_API=0
+      shift
+      ;;
     --no-start)
       START_AFTER_STOP=0
       shift
       ;;
     --timeout)
       if [[ $# -lt 2 || ! "$2" =~ ^[0-9]+$ ]]; then
-        echo "[stop_online_backend_processes] --timeout requires a non-negative integer" >&2
+        echo "[stop_server_and_workers] --timeout requires a non-negative integer" >&2
         exit 2
       fi
       TIMEOUT_SECONDS="$2"
@@ -200,21 +230,29 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "[stop_online_backend_processes] Unknown argument: $1" >&2
+      echo "[stop_server_and_workers] Unknown argument: $1" >&2
       usage >&2
       exit 2
       ;;
   esac
 done
 
-echo "[stop_online_backend_processes] Matching process command pattern:"
-echo "  ${PATTERN}"
+TARGET_PATTERN="$WORKER_PATTERN"
+if [[ "$RESTART_API" == "1" ]]; then
+  TARGET_PATTERN="${TARGET_PATTERN}|${API_PATTERN}"
+  echo "[stop_server_and_workers] Mode: restart all workers and the main API"
+else
+  echo "[stop_server_and_workers] Mode: restart all workers; keep the main API running"
+fi
+echo "[stop_server_and_workers] Protected HTTP services: VLM2Vec and Qwen3 embedding APIs"
+echo "[stop_server_and_workers] Matching process command pattern:"
+echo "  ${TARGET_PATTERN}"
 echo
 
-if ! pgrep -af "$PATTERN"; then
-  echo "[stop_online_backend_processes] No matching processes found."
+if ! pgrep -af "$TARGET_PATTERN"; then
+  echo "[stop_server_and_workers] No matching processes found."
   if [[ "$DRY_RUN" == "1" ]]; then
-    echo "[stop_online_backend_processes] Dry run only; services were not restarted."
+    echo "[stop_server_and_workers] Dry run only; services were not restarted."
     exit 0
   fi
 fi
@@ -223,23 +261,23 @@ collect_target_pids
 expand_process_groups
 
 if [[ "${#TARGET_PIDS[@]}" -eq 0 ]]; then
-  echo "[stop_online_backend_processes] No live target PIDs found after filtering."
+  echo "[stop_server_and_workers] No live target PIDs found after filtering."
   if [[ "$DRY_RUN" == "1" ]]; then
-    echo "[stop_online_backend_processes] Dry run only; services were not restarted."
+    echo "[stop_server_and_workers] Dry run only; services were not restarted."
     exit 0
   fi
   start_services
 fi
 
 echo
-echo "[stop_online_backend_processes] Target PIDs: ${TARGET_PIDS[*]}"
+echo "[stop_server_and_workers] Target PIDs: ${TARGET_PIDS[*]}"
 
 if [[ "$DRY_RUN" == "1" ]]; then
-  echo "[stop_online_backend_processes] Dry run only; no processes were stopped and services were not restarted."
+  echo "[stop_server_and_workers] Dry run only; no processes were stopped and services were not restarted."
   exit 0
 fi
 
-echo "[stop_online_backend_processes] Sending SIGTERM with kill..."
+echo "[stop_server_and_workers] Sending SIGTERM with kill..."
 kill "${TARGET_PIDS[@]}" 2>/dev/null || true
 
 if [[ "$TIMEOUT_SECONDS" -gt 0 ]]; then
@@ -254,18 +292,18 @@ for pid in "${TARGET_PIDS[@]}"; do
 done
 
 if [[ "${#STILL_RUNNING[@]}" -eq 0 ]]; then
-  echo "[stop_online_backend_processes] All matched processes stopped."
+  echo "[stop_server_and_workers] All matched processes stopped."
   start_services
 fi
 
-echo "[stop_online_backend_processes] Still running after ${TIMEOUT_SECONDS}s: ${STILL_RUNNING[*]}"
+echo "[stop_server_and_workers] Still running after ${TIMEOUT_SECONDS}s: ${STILL_RUNNING[*]}"
 
 if [[ "$FORCE" != "1" ]]; then
-  echo "[stop_online_backend_processes] Re-run with --force to send SIGKILL to remaining processes."
+  echo "[stop_server_and_workers] Re-run with --force to send SIGKILL to remaining processes."
   exit 1
 fi
 
-echo "[stop_online_backend_processes] Sending SIGKILL to remaining processes..."
+echo "[stop_server_and_workers] Sending SIGKILL to remaining processes..."
 kill -9 "${STILL_RUNNING[@]}" 2>/dev/null || true
 
 FINAL_RUNNING=()
@@ -276,9 +314,9 @@ for pid in "${STILL_RUNNING[@]}"; do
 done
 
 if [[ "${#FINAL_RUNNING[@]}" -eq 0 ]]; then
-  echo "[stop_online_backend_processes] All remaining processes were force-stopped."
+  echo "[stop_server_and_workers] All remaining processes were force-stopped."
   start_services
 fi
 
-echo "[stop_online_backend_processes] Failed to stop PIDs: ${FINAL_RUNNING[*]}" >&2
+echo "[stop_server_and_workers] Failed to stop PIDs: ${FINAL_RUNNING[*]}" >&2
 exit 1

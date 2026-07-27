@@ -261,7 +261,11 @@ class StreamChunkManager:
             existing.setdefault("last_processed_proc_index", existing.get("last_processed_chunk_index", -1))
             existing.setdefault("stream_timeline_end", 0.0)
             existing["updated_at"] = now
-            self.save_stream_state(existing)
+            # init_stream is the explicit reopen path. Save directly under the
+            # stream lock so a terminal status from the previous run can become
+            # running again when /stream/start or /rokid/stream/start is called.
+            with self.stream_state_lock():
+                self._save_stream_state_unlocked(existing)
             if not self.event_state_path.exists():
                 self.save_event_state(self.empty_event_state(existing["stream_id"]))
             return existing

@@ -85,16 +85,16 @@ SPEC.loader.exec_module(query_engine)
 def test_rokid_query_time_override_uses_latest_runtime_relative_time(tmp_path: Path) -> None:
     _write_json(tmp_path / "stream" / "rokid_state.json", {"latest_frame_relative_ts_ms": 90_000})
     day_context = {
-        "is_rokid_day_child": True,
         "day_label": "DAY2",
-        "start_datetime": "2026-07-08 10:03:12",
-        "timezone": "Asia/Shanghai",
-        "time_source": "client_device",
+        "weekday_label": "周二",
+        "display_day_label": "DAY2 周二",
+        "relative_ts_base_ms": 30_000,
     }
 
     override = query_engine._rokid_query_time_override(day_context, tmp_path)
 
-    assert override["until_date"] == "DAY2"
-    assert override["until_time"] == "10044200"
+    assert override["until_date"] == "DAY2 周二"
+    assert override["until_time"] == "00010000"
     assert override["relative_seconds"] == 90.0
-    assert override["display_datetime"] == "2026-07-08 10:04:42"
+    assert override["local_day_seconds"] == 60.0
+    assert override["weekday_label"] == "周二"

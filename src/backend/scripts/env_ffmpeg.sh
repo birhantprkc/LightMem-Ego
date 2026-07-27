@@ -136,6 +136,15 @@ if [[ -d "$_em2mem_root_dir/.venv_whisperx" && "${VIRTUAL_ENV:-}" == "$_em2mem_r
   _em2mem_prepend_path "$_em2mem_root_dir/.venv_whisperx/bin"
 fi
 
+if [[ -n "${EM2MEM_FFMPEG_BIN:-}" ]]; then
+  _em2mem_ffmpeg_path_dir="$(cd "$(dirname "$EM2MEM_FFMPEG_BIN")" 2>/dev/null && pwd || true)"
+  _em2mem_prepend_path "$_em2mem_ffmpeg_path_dir"
+fi
+
+if [[ -n "${VIRTUAL_ENV:-}" && -d "$VIRTUAL_ENV/bin" ]]; then
+  export PATH="$VIRTUAL_ENV/bin:${PATH:-}"
+fi
+
 echo "[em2mem_ffmpeg_env] FFMPEG_HOME=${FFMPEG_HOME:-}"
 echo "[em2mem_ffmpeg_env] EM2MEM_FFMPEG_BIN=${EM2MEM_FFMPEG_BIN}"
 echo "[em2mem_ffmpeg_env] EM2MEM_FFPROBE_BIN=${EM2MEM_FFPROBE_BIN}"

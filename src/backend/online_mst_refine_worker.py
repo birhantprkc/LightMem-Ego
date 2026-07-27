@@ -185,7 +185,12 @@ def _enqueue_refine_followup_if_needed(
     if event_id is not None or force_refine or task_reason != FRAME_STREAM_BATCH_REASON:
         return None
     store = MSTStore(session_dir)
-    if not any(is_auto_refine_eligible(event) for event in store.load_archive_events()):
+    pending_event_ids = [
+        str(event.get("event_id"))
+        for event in store.load_archive_events()
+        if event.get("event_id") and is_auto_refine_eligible(event)
+    ][: max(1, int(limit_events))]
+    if not pending_event_ids:
         return None
     return enqueue_mst_refine_task(
         project_root=project_root,
@@ -193,6 +198,7 @@ def _enqueue_refine_followup_if_needed(
         backend=backend,
         limit_events=limit_events,
         event_id=None,
+        event_ids=pending_event_ids,
         force_refine=False,
         reason=FRAME_STREAM_BATCH_REASON,
     )

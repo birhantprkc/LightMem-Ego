@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -35,6 +36,22 @@ def _env_bool(name: str, default: bool) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return default
+
+
+_FRAME_MEMORY_EXECUTOR = ThreadPoolExecutor(
+    max_workers=max(1, _env_int("EM2MEM_FRAME_STREAM_MEMORY_WORKERS", 1)),
+    thread_name_prefix="frame-memory",
+)
+
+
 def _append_timeline_event_safe(session_dir: Path, event_type: str, **kwargs: Any) -> None:
     try:
         append_timeline_event(session_dir, event_type, **kwargs)
@@ -67,6 +84,193 @@ def _is_live_adapter_mode(mode: str) -> bool:
     return mode in {"live_pusher_rtmp", "web_webrtc_whip", "rokid_live_rtmp"}
 
 
+def _run_frame_memory_updates(
+    project_root: Path,
+    session_dir: Path,
+    *,
+    frame_index: int,
+    frame_record: dict[str, Any],
+    client_ts_ms: int | None,
+    source: str,
+    filename_hint: str | None,
+    update_mcur: bool,
+    update_mst: bool,
+) -> dict[str, Any]:
+    store = FrameStreamStore(session_dir)
+    frame_state = store.load()
+    mcur_error = None
+    frame_mst_error = None
+    frame_mst_result = None
+    if update_mcur:
+        try:
+            from online_current.mcur_store import MCurStore
+
+            mcur_result = MCurStore(session_dir).update_from_frame_stream(
+                frame_index=frame_index,
+                frame_path=str(frame_record.get("saved_path") or ""),
+                relative_ts_ms=int(frame_record.get("relative_ts_ms", 0) or 0),
+                client_ts_ms=client_ts_ms,
+                source=str(source or "http_frame_upload"),
+            )
+            frame_state = store.mark_mcur_updated(
+                frame_index=frame_index,
+                current_frame_path=str(mcur_result.get("current_frame_path") or "") or None,
+                mcur_state=mcur_result,
+            )
+            refresh_session_pipeline_state(session_dir)
+        except Exception as exc:
+            mcur_error = str(exc)
+            frame_state = store.load()
+            print(f"[frame_stream] M_cur update failed session_id={session_dir.name} frame_index={frame_index}: {exc}", flush=True)
+            _append_timeline_event_safe(
+                session_dir,
+                "error",
+                chunk_index=frame_index,
+                chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
+                metadata={"stage": "mcur_updated_from_frame", "error": mcur_error},
+            )
+    if update_mst:
+        try:
+            if _env_bool("EM2MEM_FRAME_STREAM_ENABLE_MST", True):
+                from online_short_term.frame_stream_event_builder import FrameStreamMicroEventBuilder
+
+                frame_mst_result = FrameStreamMicroEventBuilder(session_dir).process_frame(
+                    frame_record=frame_record,
+                    current_frame_path=str(frame_state.get("latest_current_frame_path") or "") or None,
+                    project_root=project_root,
+                    enqueue_refine=_env_bool("EM2MEM_FRAME_STREAM_ENQUEUE_REFINE", True),
+                )
+                refresh_session_pipeline_state(session_dir)
+                _append_timeline_event_safe(
+                    session_dir,
+                    "frame_mst_updated",
+                    chunk_index=frame_index,
+                    chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
+                    metadata={
+                        "diff_score": frame_mst_result.get("diff_score"),
+                        "has_open_event": frame_mst_result.get("has_open_event"),
+                        "closed_event_count": frame_mst_result.get("closed_event_count", 0),
+                    },
+                )
+                if int(frame_mst_result.get("opened_event_count", 0) or 0) > 0:
+                    _append_timeline_event_safe(
+                        session_dir,
+                        "frame_mst_opened",
+                        chunk_index=frame_index,
+                        chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
+                        metadata={"opened_events": frame_mst_result.get("opened_events", [])},
+                    )
+                if int(frame_mst_result.get("closed_event_count", 0) or 0) > 0:
+                    _append_timeline_event_safe(
+                        session_dir,
+                        "frame_mst_closed",
+                        chunk_index=frame_index,
+                        chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
+                        metadata={
+                            "closed_event_ids": frame_mst_result.get("closed_event_ids", []),
+                            "refine_task_paths": frame_mst_result.get("refine_task_paths", []),
+                        },
+                    )
+                    if frame_mst_result.get("refine_task_paths"):
+                        _append_timeline_event_safe(
+                            session_dir,
+                            "frame_mst_refine_queued",
+                            chunk_index=frame_index,
+                            chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
+                            metadata={"refine_task_paths": frame_mst_result.get("refine_task_paths", [])},
+                        )
+        except Exception as exc:
+            frame_mst_error = str(exc)
+            print(f"[frame_stream] M_st update failed session_id={session_dir.name} frame_index={frame_index}: {exc}", flush=True)
+            _append_timeline_event_safe(
+                session_dir,
+                "frame_mst_error",
+                chunk_index=frame_index,
+                chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
+                metadata={"error": frame_mst_error},
+            )
+    _append_timeline_event_safe(
+        session_dir,
+        "frame_received",
+        chunk_index=frame_index,
+        chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
+        metadata={
+            "relative_ts_ms": frame_record.get("relative_ts_ms"),
+            "saved_path": frame_record.get("saved_path"),
+            "mcur_version": frame_state.get("mcur_version"),
+            "source": source,
+            "filename_hint": filename_hint,
+            "memory_accepted": True,
+        },
+    )
+    if mcur_error is None and update_mcur:
+        _append_timeline_event_safe(
+            session_dir,
+            "mcur_updated_from_frame",
+            chunk_index=frame_index,
+            chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
+            metadata={
+                "current_frame_path": frame_state.get("latest_current_frame_path"),
+                "mcur_version": frame_state.get("mcur_version"),
+            },
+        )
+    return {
+        "frame_state": frame_state,
+        "mcur_error": mcur_error,
+        "frame_mst": frame_mst_result,
+        "frame_mst_error": frame_mst_error,
+    }
+
+
+def _log_frame_memory_update_failure(future: Any, *, session_id: str, frame_index: int) -> None:
+    try:
+        future.result()
+    except Exception as exc:
+        print(f"[frame_stream] async memory update crashed session_id={session_id} frame_index={frame_index}: {exc}", flush=True)
+
+
+def _queue_frame_memory_updates(
+    project_root: Path,
+    session_dir: Path,
+    *,
+    frame_index: int,
+    frame_record: dict[str, Any],
+    client_ts_ms: int | None,
+    source: str,
+    filename_hint: str | None,
+    update_mcur: bool,
+    update_mst: bool,
+) -> bool:
+    _append_timeline_event_safe(
+        session_dir,
+        "frame_memory_update_queued",
+        chunk_index=frame_index,
+        chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
+        metadata={
+            "relative_ts_ms": frame_record.get("relative_ts_ms"),
+            "saved_path": frame_record.get("saved_path"),
+            "update_mcur": bool(update_mcur),
+            "update_mst": bool(update_mst),
+        },
+    )
+    future = _FRAME_MEMORY_EXECUTOR.submit(
+        _run_frame_memory_updates,
+        project_root,
+        session_dir,
+        frame_index=frame_index,
+        frame_record=dict(frame_record),
+        client_ts_ms=client_ts_ms,
+        source=source,
+        filename_hint=filename_hint,
+        update_mcur=update_mcur,
+        update_mst=update_mst,
+    )
+    future.add_done_callback(
+        lambda done: _log_frame_memory_update_failure(done, session_id=session_dir.name, frame_index=frame_index)
+    )
+    return True
+
+
 def ingest_frame(
     project_root: Path,
     session_id: str,
@@ -85,6 +289,7 @@ def ingest_frame(
     filename_hint: str | None = None,
     update_mcur: bool = True,
     update_mst: bool = True,
+    async_memory_updates: bool = False,
     allow_live_input: bool = False,
 ) -> dict[str, Any]:
     """Ingest one realtime image frame without depending on FastAPI UploadFile.
@@ -215,120 +420,36 @@ def ingest_frame(
         mcur_error = None
         frame_mst_error = None
         frame_mst_result = None
-        if update_mcur and memory_accepted:
-            try:
-                from online_current.mcur_store import MCurStore
-
-                mcur_result = MCurStore(session_dir).update_from_frame_stream(
+        memory_update_queued = False
+        if memory_accepted and (update_mcur or update_mst):
+            if async_memory_updates:
+                memory_update_queued = _queue_frame_memory_updates(
+                    project_root,
+                    session_dir,
                     frame_index=frame_index,
-                    frame_path=str(frame_record.get("saved_path") or ""),
-                    relative_ts_ms=int(frame_record.get("relative_ts_ms", 0) or 0),
+                    frame_record=frame_record,
                     client_ts_ms=client_ts_ms,
                     source=str(source or "http_frame_upload"),
+                    filename_hint=filename_hint,
+                    update_mcur=update_mcur,
+                    update_mst=update_mst,
                 )
-                frame_state = store.mark_mcur_updated(
+            else:
+                memory_update = _run_frame_memory_updates(
+                    project_root,
+                    session_dir,
                     frame_index=frame_index,
-                    current_frame_path=str(mcur_result.get("current_frame_path") or "") or None,
-                    mcur_state=mcur_result,
+                    frame_record=frame_record,
+                    client_ts_ms=client_ts_ms,
+                    source=str(source or "http_frame_upload"),
+                    filename_hint=filename_hint,
+                    update_mcur=update_mcur,
+                    update_mst=update_mst,
                 )
-                refresh_session_pipeline_state(session_dir)
-            except Exception as exc:
-                mcur_error = str(exc)
-                frame_state = store.load()
-                print(f"[frame_stream] M_cur update failed session_id={session_id} frame_index={frame_index}: {exc}", flush=True)
-                _append_timeline_event_safe(
-                    session_dir,
-                    "error",
-                    chunk_index=frame_index,
-                    chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
-                    metadata={"stage": "mcur_updated_from_frame", "error": mcur_error},
-                )
-        if update_mst and memory_accepted:
-            try:
-                if _env_bool("EM2MEM_FRAME_STREAM_ENABLE_MST", True):
-                    from online_short_term.frame_stream_event_builder import FrameStreamMicroEventBuilder
-
-                    frame_mst_result = FrameStreamMicroEventBuilder(session_dir).process_frame(
-                        frame_record=frame_record,
-                        current_frame_path=str(frame_state.get("latest_current_frame_path") or "") or None,
-                        project_root=project_root,
-                        enqueue_refine=_env_bool("EM2MEM_FRAME_STREAM_ENQUEUE_REFINE", True),
-                    )
-                    refresh_session_pipeline_state(session_dir)
-                    _append_timeline_event_safe(
-                        session_dir,
-                        "frame_mst_updated",
-                        chunk_index=frame_index,
-                        chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
-                        metadata={
-                            "diff_score": frame_mst_result.get("diff_score"),
-                            "has_open_event": frame_mst_result.get("has_open_event"),
-                            "closed_event_count": frame_mst_result.get("closed_event_count", 0),
-                        },
-                    )
-                    if int(frame_mst_result.get("opened_event_count", 0) or 0) > 0:
-                        _append_timeline_event_safe(
-                            session_dir,
-                            "frame_mst_opened",
-                            chunk_index=frame_index,
-                            chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
-                            metadata={"opened_events": frame_mst_result.get("opened_events", [])},
-                        )
-                    if int(frame_mst_result.get("closed_event_count", 0) or 0) > 0:
-                        _append_timeline_event_safe(
-                            session_dir,
-                            "frame_mst_closed",
-                            chunk_index=frame_index,
-                            chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
-                            metadata={
-                                "closed_event_ids": frame_mst_result.get("closed_event_ids", []),
-                                "refine_task_paths": frame_mst_result.get("refine_task_paths", []),
-                            },
-                        )
-                        if frame_mst_result.get("refine_task_paths"):
-                            _append_timeline_event_safe(
-                                session_dir,
-                                "frame_mst_refine_queued",
-                                chunk_index=frame_index,
-                                chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
-                                metadata={"refine_task_paths": frame_mst_result.get("refine_task_paths", [])},
-                            )
-            except Exception as exc:
-                frame_mst_error = str(exc)
-                print(f"[frame_stream] M_st update failed session_id={session_id} frame_index={frame_index}: {exc}", flush=True)
-                _append_timeline_event_safe(
-                    session_dir,
-                    "frame_mst_error",
-                    chunk_index=frame_index,
-                    chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
-                    metadata={"error": frame_mst_error},
-                )
-        if memory_accepted:
-            _append_timeline_event_safe(
-                session_dir,
-                "frame_received",
-                chunk_index=frame_index,
-                chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
-                metadata={
-                    "relative_ts_ms": frame_record.get("relative_ts_ms"),
-                    "saved_path": frame_record.get("saved_path"),
-                    "mcur_version": frame_state.get("mcur_version"),
-                    "source": source,
-                    "filename_hint": filename_hint,
-                    "memory_accepted": True,
-                },
-            )
-        if mcur_error is None and update_mcur and memory_accepted:
-            _append_timeline_event_safe(
-                session_dir,
-                "mcur_updated_from_frame",
-                chunk_index=frame_index,
-                chunk_id=str(frame_record.get("frame_id") or f"frame_{frame_index:06d}"),
-                metadata={
-                    "current_frame_path": frame_state.get("latest_current_frame_path"),
-                    "mcur_version": frame_state.get("mcur_version"),
-                },
-            )
+                frame_state = memory_update.get("frame_state") if isinstance(memory_update.get("frame_state"), dict) else frame_state
+                mcur_error = memory_update.get("mcur_error")
+                frame_mst_result = memory_update.get("frame_mst")
+                frame_mst_error = memory_update.get("frame_mst_error")
         if is_rokid_input_mode(mode):
             record_rokid_media_ingest(
                 session_dir,
@@ -353,6 +474,8 @@ def ingest_frame(
                 "saved_path": frame_record.get("saved_path"),
                 "current_frame_path": frame_state.get("latest_current_frame_path"),
                 "memory_accepted": memory_accepted,
+                "memory_update_queued": memory_update_queued,
+                "memory_update_async": bool(async_memory_updates and memory_accepted and (update_mcur or update_mst)),
                 "memory_accepted_count": frame_state.get("memory_accepted_count", 0),
                 "preview_received_count": frame_state.get("preview_received_count", frame_state.get("received_count", 0)),
                 "mcur_ready": bool(frame_state.get("mcur_ready")),

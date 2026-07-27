@@ -308,7 +308,7 @@ def build_stream_status(project_root: Path, session_dir: Path) -> dict[str, Any]
         "frame_mst": frame_mst,
         "asr": {
             "enabled": _as_bool(os.getenv("EM2MEM_STREAM_ASR_ENABLED"), True),
-            "backend": os.getenv("EM2MEM_STREAM_ASR_BACKEND", "whisperx"),
+            "backend": os.getenv("EM2MEM_STREAM_ASR_BACKEND", "xfyun"),
             "pending": asr_pending,
             "done": asr_done,
             "failed": asr_failed,

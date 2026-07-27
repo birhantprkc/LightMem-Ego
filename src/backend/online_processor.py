@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -12,11 +13,27 @@ from online_preprocess import (
     sample_keyframes_for_segments,
     segment_video_into_clips,
     transcribe_audio_with_whisperx,
+    transcribe_audio_with_xfyun,
     write_empty_transcript_outputs,
     write_em2mem_session_files,
 )
 from online_preprocess.asr_whisperx import WhisperXRuntime
 from online_preprocess.io_utils import OnlinePreprocessError, ensure_dir, write_json, write_status
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _preprocess_asr_backend() -> str:
+    return (os.getenv("EM2MEM_PREPROCESS_ASR_BACKEND") or os.getenv("EM2MEM_ASR_BACKEND") or "xfyun").strip().lower()
+
+
+def _xfyun_fallback_to_whisperx() -> bool:
+    return _env_bool("EM2MEM_XFYUN_FALLBACK_WHISPERX", True)
 
 
 def process_session(
@@ -78,19 +95,35 @@ def process_session(
                     output_srt=transcript_srt_path,
                     output_json=transcript_json_path,
                 )
-            return transcribe_audio_with_whisperx(
-                audio_path=audio_path,
-                output_srt=transcript_srt_path,
-                output_json=transcript_json_path,
-                model_name=whisperx_model,
-                device=device,
-                compute_type=compute_type,
-                language=language,
-                model_dir=model_dir,
-                align_model_dir=align_model_dir,
-                force=force,
-                runtime=asr_runtime,
-            )
+            backend = _preprocess_asr_backend()
+            if backend in {"xfyun", "iflytek"}:
+                try:
+                    return transcribe_audio_with_xfyun(
+                        audio_path=audio_path,
+                        output_srt=transcript_srt_path,
+                        output_json=transcript_json_path,
+                        force=force,
+                    )
+                except Exception as exc:
+                    if not _xfyun_fallback_to_whisperx():
+                        raise
+                    print(f"[preprocess_asr] xfyun failed; falling back to whisperx: {exc}", flush=True)
+                    backend = "whisperx"
+            if backend == "whisperx":
+                return transcribe_audio_with_whisperx(
+                    audio_path=audio_path,
+                    output_srt=transcript_srt_path,
+                    output_json=transcript_json_path,
+                    model_name=whisperx_model,
+                    device=device,
+                    compute_type=compute_type,
+                    language=language,
+                    model_dir=model_dir,
+                    align_model_dir=align_model_dir,
+                    force=force,
+                    runtime=asr_runtime,
+                )
+            raise OnlinePreprocessError(f"Unsupported preprocess ASR backend: {backend}")
 
         def run_visual_preprocess() -> list[dict]:
             visual_segments = segment_video_into_clips(

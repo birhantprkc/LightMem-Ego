@@ -10,6 +10,7 @@ from online_short_term.episodic_window_builder import MSTEpisodicWindowBuilder
 from online_short_term.mst_store import MSTStore
 from online_short_term.refine_status import write_refine_status
 from online_short_term.schemas import DEFAULT_SESSIONS_ROOT
+from online_pipeline.rokid_day import apply_demo_day_fields
 
 
 REFINED_STATUSES = {"refined", "final"}
@@ -59,7 +60,7 @@ def _replace_or_append_episode(existing: list[dict[str, Any]], episode: dict[str
 
 
 def _caption_doc_from_episode(episode: dict[str, Any]) -> dict[str, Any]:
-    return {
+    output = {
         "episode_id": episode.get("episode_id"),
         "doc_id": episode.get("episode_id"),
         "segment_id": episode.get("segment_id"),
@@ -85,13 +86,26 @@ def _caption_doc_from_episode(episode: dict[str, Any]) -> dict[str, Any]:
         "status": "complete",
         "confidence": episode.get("confidence"),
     }
+    for key in (
+        "date",
+        "day_label",
+        "weekday_label",
+        "weekday_label_en",
+        "display_day_label",
+        "relative_day_start_ms",
+        "local_start_time",
+        "local_end_time",
+    ):
+        if episode.get(key) is not None:
+            output[key] = episode[key]
+    return output
 
 
 def _evidence_doc_from_episode(episode: dict[str, Any]) -> dict[str, Any]:
     start = int(round(float(episode.get("start_time", 0.0) or 0.0)))
     end = int(round(float(episode.get("end_time", 0.0) or 0.0)))
     doc_id = f"mst_evd_{start:06d}_{end:06d}"
-    return {
+    output = {
         "doc_id": doc_id,
         "evidence_doc_id": doc_id,
         "episode_id": episode.get("episode_id"),
@@ -121,6 +135,19 @@ def _evidence_doc_from_episode(episode: dict[str, Any]) -> dict[str, Any]:
         "status": "complete",
         "episodic_source": "mst_micro_events",
     }
+    for key in (
+        "date",
+        "day_label",
+        "weekday_label",
+        "weekday_label_en",
+        "display_day_label",
+        "relative_day_start_ms",
+        "local_start_time",
+        "local_end_time",
+    ):
+        if episode.get(key) is not None:
+            output[key] = episode[key]
+    return output
 
 
 def _write_outputs(session_dir: Path, episodes: list[dict[str, Any]], result: dict[str, Any]) -> dict[str, Path]:
@@ -323,6 +350,12 @@ def build_episodic_from_mst(
             session_id=session_id,
             session_dir=session_dir,
             version=version,
+        )
+        apply_demo_day_fields(
+            episode,
+            session_dir=session_dir,
+            start_seconds=episode.get("start_time"),
+            end_seconds=episode.get("end_time"),
         )
         episodes = _replace_or_append_episode(episodes, episode)
         generated.append(episode)

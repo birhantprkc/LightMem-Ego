@@ -48,6 +48,11 @@ def _split_languages(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _normalize_asr_backend(value: str | None, default: str = "xfyun") -> str:
+    backend = (value or default).strip().lower()
+    return "xfyun" if backend == "iflytek" else backend
+
+
 def run_worker(args: argparse.Namespace) -> None:
     project_root = Path(args.project_root).resolve()
     sessions_root = Path(args.sessions_root).resolve()
@@ -65,19 +70,63 @@ def run_worker(args: argparse.Namespace) -> None:
         align_model_dir=args.align_model_dir,
         preload_align_languages=_split_languages(args.preload_align_languages),
     )
-    runtime.load()
+
+    def _voice_question_backend() -> str:
+        return _normalize_asr_backend(os.getenv("EM2MEM_VOICE_QUESTION_ASR_BACKEND"), "whisperx")
+
+    def _should_preload_whisperx() -> bool:
+        if not _env_bool("EM2MEM_WHISPERX_PRELOAD", True):
+            return False
+        configured_backends = {
+            _normalize_asr_backend(args.preprocess_asr_backend, "xfyun"),
+        }
+        if _env_bool("EM2MEM_PREPROCESS_CONSUME_STREAM_ASR", True):
+            configured_backends.update(
+                {
+                    _normalize_asr_backend(os.getenv("EM2MEM_STREAM_ASR_BACKEND"), "xfyun"),
+                    _normalize_asr_backend(os.getenv("EM2MEM_AUDIO_ASR_BACKEND"), "xfyun"),
+                    _voice_question_backend(),
+                }
+            )
+        return "whisperx" in configured_backends
+
+    def _stream_backend_for_task(task: dict) -> str:
+        if str(task.get("source") or "") == "audio_chunk_window":
+            return _normalize_asr_backend(os.getenv("EM2MEM_AUDIO_ASR_BACKEND") or str(task.get("asr_backend") or ""), "xfyun")
+        if str(task.get("source") or "") == "voice_question":
+            return _normalize_asr_backend(os.getenv("EM2MEM_VOICE_QUESTION_ASR_BACKEND") or str(task.get("asr_backend") or ""), "whisperx")
+        return _normalize_asr_backend(os.getenv("EM2MEM_STREAM_ASR_BACKEND") or str(task.get("asr_backend") or ""), "xfyun")
+
+    def _runtime_model_loaded() -> bool:
+        return runtime.asr_model is not None
+
+    def _status_model_name(asr_backend: str | None = None) -> str:
+        return _normalize_asr_backend(asr_backend or args.preprocess_asr_backend, "xfyun")
+
+    def _status_model_path(asr_backend: str | None = None) -> str:
+        return str(args.model_dir) if _status_model_name(asr_backend) == "whisperx" else ""
+
+    def _status_device(asr_backend: str | None = None) -> str:
+        return runtime.device if _status_model_name(asr_backend) == "whisperx" or _runtime_model_loaded() else "api"
 
     def _queue_pending() -> int:
         return len(list_queued_tasks(project_root)) + len(list_queued_stream_asr_tasks(project_root))
 
-    def _runtime_extra(session_id: str | None = None) -> dict:
+    def _runtime_extra(session_id: str | None = None, asr_backend: str | None = None) -> dict:
         extra = {
+            "asr_backend": _status_model_name(asr_backend),
+            "preprocess_asr_backend": _normalize_asr_backend(args.preprocess_asr_backend, "xfyun"),
+            "stream_asr_backend": _normalize_asr_backend(os.getenv("EM2MEM_STREAM_ASR_BACKEND"), "xfyun"),
+            "audio_asr_backend": _normalize_asr_backend(os.getenv("EM2MEM_AUDIO_ASR_BACKEND"), "xfyun"),
+            "voice_question_asr_backend": _voice_question_backend(),
             "whisperx_model": args.whisperx_model,
             "compute_type": runtime.compute_type,
             "preload_align_languages": args.preload_align_languages,
+            "whisperx_loaded": _runtime_model_loaded(),
             "pipeline_mode": get_pipeline_mode(),
             "auto_legacy_evidence": _auto_legacy_evidence_enabled(),
-            "stream_asr_enabled": _env_bool("EM2MEM_STREAM_ASR_ENABLED", True),
+            "stream_asr_enabled": _env_bool("EM2MEM_STREAM_ASR_ENABLED", True)
+            and _env_bool("EM2MEM_PREPROCESS_CONSUME_STREAM_ASR", True),
             "stream_asr_queue_pending": len(list_queued_stream_asr_tasks(project_root)),
             "stream_asr_processed_count": stream_asr_processed_count,
             "last_stream_asr_task_id": last_stream_asr_task_id,
@@ -88,41 +137,40 @@ def run_worker(args: argparse.Namespace) -> None:
             extra["session_id"] = session_id
         return extra
 
+    if _should_preload_whisperx():
+        print("[preprocess_worker] preloading WhisperX runtime", flush=True)
+        runtime.load()
+        print("[preprocess_worker] WhisperX runtime preloaded", flush=True)
+
     write_worker_runtime(
         project_root,
         "preprocess",
         status="ready",
-        model_name="whisperx",
-        model_path=str(args.model_dir),
-        device=runtime.device,
-        model_loaded=True,
-        warmup_done=True,
+        model_name=_status_model_name(),
+        model_path=_status_model_path(),
+        device=_status_device(),
+        model_loaded=_runtime_model_loaded(),
+        warmup_done=_runtime_model_loaded(),
         queue_pending=len(list_queued_tasks(project_root)) + len(list_queued_stream_asr_tasks(project_root)),
-        extra={
-            "whisperx_model": args.whisperx_model,
-            "compute_type": runtime.compute_type,
-            "preload_align_languages": args.preload_align_languages,
-            "pipeline_mode": get_pipeline_mode(),
-            "auto_legacy_evidence": _auto_legacy_evidence_enabled(),
-            "stream_asr_enabled": _env_bool("EM2MEM_STREAM_ASR_ENABLED", True),
-            "stream_asr_queue_pending": len(list_queued_stream_asr_tasks(project_root)),
-            "stream_asr_processed_count": stream_asr_processed_count,
-            "last_stream_asr_task_id": last_stream_asr_task_id,
-            "last_stream_asr_session_id": last_stream_asr_session_id,
-            "last_stream_asr_error": last_stream_asr_error,
-        },
+        extra=_runtime_extra(),
     )
     print(
-        "WhisperX runtime loaded:",
-        f"model={args.whisperx_model}",
-        f"device={runtime.device}",
-        f"compute_type={runtime.compute_type}",
-        f"align={args.preload_align_languages}",
+        "ASR worker ready:",
+        f"preprocess_backend={_status_model_name()}",
+        f"stream_backend={_normalize_asr_backend(os.getenv('EM2MEM_STREAM_ASR_BACKEND'), 'xfyun')}",
+        f"audio_backend={_normalize_asr_backend(os.getenv('EM2MEM_AUDIO_ASR_BACKEND'), 'xfyun')}",
+        f"voice_question_backend={_voice_question_backend()}",
+        f"whisperx_loaded={_runtime_model_loaded()}",
         flush=True,
     )
 
     while True:
-        stream_asr_tasks = list_queued_stream_asr_tasks(project_root) if _env_bool("EM2MEM_STREAM_ASR_ENABLED", True) else []
+        stream_asr_tasks = (
+            list_queued_stream_asr_tasks(project_root)
+            if _env_bool("EM2MEM_STREAM_ASR_ENABLED", True)
+            and _env_bool("EM2MEM_PREPROCESS_CONSUME_STREAM_ASR", True)
+            else []
+        )
         if stream_asr_tasks:
             for task_path in stream_asr_tasks:
                 claimed = claim_stream_asr_task(project_root, task_path)
@@ -131,6 +179,7 @@ def run_worker(args: argparse.Namespace) -> None:
                 claimed_path, task = claimed
                 session_id = str(task.get("session_id") or "")
                 task_id = str(task.get("task_id") or claimed_path.stem)
+                stream_backend = _stream_backend_for_task(task)
                 last_stream_asr_task_id = task_id
                 last_stream_asr_session_id = session_id
                 try:
@@ -139,30 +188,20 @@ def run_worker(args: argparse.Namespace) -> None:
                         "asr_started",
                         chunk_index=int(task.get("upload_chunk_index", -1)),
                         chunk_id=str(task.get("upload_chunk_id") or ""),
-                        metadata={"task_id": task_id, "backend": task.get("asr_backend")},
+                        metadata={"task_id": task_id, "backend": stream_backend},
                     )
                     write_worker_runtime(
                         project_root,
                         "preprocess",
                         status="busy_stream_asr",
-                        model_name="whisperx",
-                        model_path=str(args.model_dir),
-                        device=runtime.device,
-                        model_loaded=True,
-                        warmup_done=True,
+                        model_name=_status_model_name(stream_backend),
+                        model_path=_status_model_path(stream_backend),
+                        device=_status_device(stream_backend),
+                        model_loaded=_runtime_model_loaded(),
+                        warmup_done=_runtime_model_loaded(),
                         queue_pending=len(list_queued_tasks(project_root)) + len(list_queued_stream_asr_tasks(project_root)),
                         last_task_id=task_id,
-                        extra={
-                            "session_id": session_id,
-                            "pipeline_mode": get_pipeline_mode(),
-                            "auto_legacy_evidence": _auto_legacy_evidence_enabled(),
-                            "stream_asr_enabled": True,
-                            "stream_asr_queue_pending": len(list_queued_stream_asr_tasks(project_root)),
-                            "stream_asr_processed_count": stream_asr_processed_count,
-                            "last_stream_asr_task_id": last_stream_asr_task_id,
-                            "last_stream_asr_session_id": last_stream_asr_session_id,
-                            "last_stream_asr_error": None,
-                        },
+                        extra={**_runtime_extra(session_id, stream_backend), "last_stream_asr_error": None},
                     )
                     with WorkerTaskHeartbeat(
                         project_root,
@@ -170,13 +209,13 @@ def run_worker(args: argparse.Namespace) -> None:
                         task=task,
                         claimed_path=claimed_path,
                         status="busy_stream_asr",
-                        model_name="whisperx",
-                        model_path=str(args.model_dir),
-                        device=runtime.device,
-                        model_loaded=True,
-                        warmup_done=True,
+                        model_name=_status_model_name(stream_backend),
+                        model_path=_status_model_path(stream_backend),
+                        device=_status_device(stream_backend),
+                        model_loaded=_runtime_model_loaded(),
+                        warmup_done=_runtime_model_loaded(),
                         queue_pending=_queue_pending,
-                        extra_fn=lambda session_id=session_id: _runtime_extra(session_id),
+                        extra_fn=lambda session_id=session_id, stream_backend=stream_backend: _runtime_extra(session_id, stream_backend),
                         interval_env="EM2MEM_PREPROCESS_HEARTBEAT_SECONDS",
                     ):
                         result = process_stream_asr_task(
@@ -225,21 +264,15 @@ def run_worker(args: argparse.Namespace) -> None:
                         project_root,
                         "preprocess",
                         status="error",
-                        model_name="whisperx",
-                        model_path=str(args.model_dir),
-                        device=runtime.device,
-                        model_loaded=True,
-                        warmup_done=True,
+                        model_name=_status_model_name(stream_backend),
+                        model_path=_status_model_path(stream_backend),
+                        device=_status_device(stream_backend),
+                        model_loaded=_runtime_model_loaded(),
+                        warmup_done=_runtime_model_loaded(),
                         queue_pending=len(list_queued_tasks(project_root)) + len(list_queued_stream_asr_tasks(project_root)),
                         last_task_id=task_id,
                         last_error=str(exc),
-                        extra={
-                            "session_id": session_id,
-                            "stream_asr_enabled": True,
-                            "last_stream_asr_task_id": last_stream_asr_task_id,
-                            "last_stream_asr_session_id": last_stream_asr_session_id,
-                            "last_stream_asr_error": last_stream_asr_error,
-                        },
+                        extra=_runtime_extra(session_id, stream_backend),
                     )
                 if args.once:
                     return
@@ -251,24 +284,13 @@ def run_worker(args: argparse.Namespace) -> None:
                 project_root,
                 "preprocess",
                 status="ready",
-                model_name="whisperx",
-                model_path=str(args.model_dir),
-                device=runtime.device,
-                model_loaded=True,
-                warmup_done=True,
+                model_name=_status_model_name(),
+                model_path=_status_model_path(),
+                device=_status_device(),
+                model_loaded=_runtime_model_loaded(),
+                warmup_done=_runtime_model_loaded(),
                 queue_pending=len(list_queued_stream_asr_tasks(project_root)),
-                extra={
-                    "whisperx_model": args.whisperx_model,
-                    "compute_type": runtime.compute_type,
-                    "pipeline_mode": get_pipeline_mode(),
-                    "auto_legacy_evidence": _auto_legacy_evidence_enabled(),
-                    "stream_asr_enabled": _env_bool("EM2MEM_STREAM_ASR_ENABLED", True),
-                    "stream_asr_queue_pending": len(list_queued_stream_asr_tasks(project_root)),
-                    "stream_asr_processed_count": stream_asr_processed_count,
-                    "last_stream_asr_task_id": last_stream_asr_task_id,
-                    "last_stream_asr_session_id": last_stream_asr_session_id,
-                    "last_stream_asr_error": last_stream_asr_error,
-                },
+                extra=_runtime_extra(),
             )
             if args.once:
                 return
@@ -288,24 +310,14 @@ def run_worker(args: argparse.Namespace) -> None:
                     project_root,
                     "preprocess",
                     status="busy",
-                    model_name="whisperx",
-                    model_path=str(args.model_dir),
-                    device=runtime.device,
-                    model_loaded=True,
-                    warmup_done=True,
+                    model_name=_status_model_name(),
+                    model_path=_status_model_path(),
+                    device=_status_device(),
+                    model_loaded=_runtime_model_loaded(),
+                    warmup_done=_runtime_model_loaded(),
                     queue_pending=len(list_queued_tasks(project_root)),
                     last_task_id=str(task.get("task_id") or claimed_path.stem),
-                    extra={
-                        "session_id": session_id,
-                        "pipeline_mode": get_pipeline_mode(),
-                        "auto_legacy_evidence": _auto_legacy_evidence_enabled(),
-                        "stream_asr_enabled": _env_bool("EM2MEM_STREAM_ASR_ENABLED", True),
-                        "stream_asr_queue_pending": len(list_queued_stream_asr_tasks(project_root)),
-                        "stream_asr_processed_count": stream_asr_processed_count,
-                        "last_stream_asr_task_id": last_stream_asr_task_id,
-                        "last_stream_asr_session_id": last_stream_asr_session_id,
-                        "last_stream_asr_error": last_stream_asr_error,
-                    },
+                    extra=_runtime_extra(session_id),
                 )
                 with WorkerTaskHeartbeat(
                     project_root,
@@ -313,11 +325,11 @@ def run_worker(args: argparse.Namespace) -> None:
                     task=task,
                     claimed_path=claimed_path,
                     status="busy",
-                    model_name="whisperx",
-                    model_path=str(args.model_dir),
-                    device=runtime.device,
-                    model_loaded=True,
-                    warmup_done=True,
+                    model_name=_status_model_name(),
+                    model_path=_status_model_path(),
+                    device=_status_device(),
+                    model_loaded=_runtime_model_loaded(),
+                    warmup_done=_runtime_model_loaded(),
                     queue_pending=_queue_pending,
                     extra_fn=lambda session_id=session_id: _runtime_extra(session_id),
                     interval_env="EM2MEM_PREPROCESS_HEARTBEAT_SECONDS",
@@ -368,15 +380,15 @@ def run_worker(args: argparse.Namespace) -> None:
                     project_root,
                     "preprocess",
                     status="error",
-                    model_name="whisperx",
-                    model_path=str(args.model_dir),
-                    device=runtime.device,
-                    model_loaded=True,
-                    warmup_done=True,
+                    model_name=_status_model_name(),
+                    model_path=_status_model_path(),
+                    device=_status_device(),
+                    model_loaded=_runtime_model_loaded(),
+                    warmup_done=_runtime_model_loaded(),
                     queue_pending=len(list_queued_tasks(project_root)),
                     last_task_id=str(task.get("task_id") or claimed_path.stem),
                     last_error=str(exc),
-                    extra={"session_id": session_id},
+                    extra=_runtime_extra(session_id),
                 )
 
         if args.once:
@@ -391,6 +403,7 @@ def main() -> None:
     parser.add_argument("--device", default=os.getenv("EM2MEM_WHISPERX_DEVICE", "cuda"))
     parser.add_argument("--compute-type", default=os.getenv("EM2MEM_WHISPERX_COMPUTE_TYPE", "float16"))
     parser.add_argument("--language", default=os.getenv("EM2MEM_WHISPERX_LANGUAGE") or None)
+    parser.add_argument("--preprocess-asr-backend", default=os.getenv("EM2MEM_PREPROCESS_ASR_BACKEND", "xfyun"))
     parser.add_argument("--model-dir", default=os.getenv("EM2MEM_WHISPERX_MODEL_DIR", str(DEFAULT_WHISPERX_MODEL_DIR)))
     parser.add_argument(
         "--align-model-dir",

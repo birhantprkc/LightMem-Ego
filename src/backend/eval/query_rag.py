@@ -155,8 +155,10 @@ def parse_choices(args: argparse.Namespace) -> Optional[Dict[str, str]]:
 
 
 def build_until_timestamp(day: str, time_code: str) -> int:
-    day_digit = day.replace("DAY", "").replace("Day", "").strip()
-    return int(day_digit + str(time_code).zfill(8))
+    from em2mem.memory.timestamp_utils import memory_timestamp_range
+
+    start_ts, _ = memory_timestamp_range(day, time_code, time_code)
+    return start_ts
 
 
 def summarize_selected_events(em2mem_memory: EM2Memory, doc_ids: List[str]) -> List[Dict[str, Any]]:

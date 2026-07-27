@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from .io_utils import OnlinePreprocessError, ensure_dir, read_json, write_json
+from .io_utils import OnlinePreprocessError, ensure_dir, ffmpeg_bin, read_json, write_json
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -73,6 +73,24 @@ def _default_model_dir() -> Path:
 
 def _default_align_model_dir() -> Path:
     return Path(os.getenv("EM2MEM_WHISPERX_ALIGN_MODEL_DIR", str(DEFAULT_WHISPERX_ALIGN_MODEL_DIR)))
+
+
+def _default_vad_method() -> str:
+    return os.getenv("EM2MEM_WHISPERX_VAD_METHOD", "whole").strip() or "whole"
+
+
+def _ensure_ffmpeg_on_path() -> None:
+    try:
+        ffmpeg_path = Path(ffmpeg_bin())
+    except Exception:
+        return
+    ffmpeg_dir = str(ffmpeg_path.parent)
+    if not ffmpeg_dir:
+        return
+    current_path = os.environ.get("PATH", "")
+    path_items = current_path.split(os.pathsep) if current_path else []
+    if ffmpeg_dir not in path_items:
+        os.environ["PATH"] = ffmpeg_dir + (os.pathsep + current_path if current_path else "")
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -190,6 +208,7 @@ class WhisperXRuntime:
         self.compute_type = _resolve_compute_type(compute_type, self.device)
         self.model_dir = str(Path(model_dir) if model_dir else _default_model_dir())
         self.align_model_dir = str(Path(align_model_dir) if align_model_dir else _default_align_model_dir())
+        self.vad_method = _default_vad_method()
         self.preload_align_languages = preload_align_languages or []
         self.whisperx: Any | None = None
         self.asr_model: Any | None = None
@@ -237,11 +256,46 @@ class WhisperXRuntime:
 
             if self.asr_model is None:
                 model_name_or_path = _resolve_asr_model_name_or_path(self.model_name, self.model_dir)
+                vad_model = None
+                vad_method = self.vad_method
+                if vad_method in {"whole", "all", "full", "none"}:
+                    from whisperx.diarize import Segment as SegmentX
+                    from whisperx.vads.vad import Vad
+
+                    class WholeAudioVad(Vad):
+                        def __init__(self, vad_onset: float) -> None:
+                            super().__init__(vad_onset)
+
+                        @staticmethod
+                        def preprocess_audio(audio: Any) -> Any:
+                            return audio
+
+                        @staticmethod
+                        def merge_chunks(segments_list: Any, chunk_size: int, onset: float = 0.5, offset: float | None = None):
+                            return Vad.merge_chunks(segments_list, chunk_size, onset, offset)
+
+                        def __call__(self, audio: Any, **kwargs: Any) -> list[Any]:
+                            waveform = audio.get("waveform")
+                            sample_rate = int(audio.get("sample_rate") or 16000)
+                            if waveform is None:
+                                return []
+                            try:
+                                total_samples = int(getattr(waveform, "shape", [len(waveform)])[-1])
+                            except Exception:
+                                total_samples = len(waveform)
+                            if total_samples <= 0:
+                                return []
+                            return [SegmentX(0.0, float(total_samples) / float(sample_rate), "UNKNOWN")]
+
+                    vad_model = WholeAudioVad(vad_onset=0.5)
+                    vad_method = None
                 self.asr_model = self.whisperx.load_model(
                     model_name_or_path,
                     device=self.device,
                     device_index=self.device_index,
                     compute_type=self.compute_type,
+                    vad_model=vad_model,
+                    vad_method=vad_method,
                     download_root=self.model_dir,
                 )
 
@@ -256,6 +310,7 @@ class WhisperXRuntime:
             assert self.whisperx is not None
             assert self.asr_model is not None
 
+            _ensure_ffmpeg_on_path()
             audio = self.whisperx.load_audio(str(audio_path))
             transcription = _transcribe_with_language(self.asr_model, audio, batch_size=batch_size, language=language)
             raw_segments = transcription.get("segments", []) or []
