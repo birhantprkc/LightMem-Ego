@@ -298,6 +298,7 @@ class LightMemEgoApiClient(
                 .put("max_image_evidence", 6)
                 .put("debug_router", BuildConfig.LIGHTMEM_DEBUG_ROUTER)
                 .put("use_interaction_cache", true)
+                .put("answer_tts", LightMemEgoConfig.ANSWER_TTS_ENABLED)
                 .put("client_source", "glasses")
                 .put("input_method", "preset"),
         )
@@ -329,6 +330,7 @@ class LightMemEgoApiClient(
                 "max_image_evidence" to "6",
                 "debug_router" to BuildConfig.LIGHTMEM_DEBUG_ROUTER.toString(),
                 "use_interaction_cache" to "true",
+                "answer_tts" to LightMemEgoConfig.ANSWER_TTS_ENABLED.toString(),
                 "client_source" to "glasses",
                 "input_method" to "voice",
             ),
@@ -361,6 +363,7 @@ class LightMemEgoApiClient(
                 "max_image_evidence" to "6",
                 "debug_router" to BuildConfig.LIGHTMEM_DEBUG_ROUTER.toString(),
                 "use_interaction_cache" to "true",
+                "answer_tts" to LightMemEgoConfig.ANSWER_TTS_ENABLED.toString(),
                 "client_source" to "glasses",
                 "input_method" to "voice",
             ),

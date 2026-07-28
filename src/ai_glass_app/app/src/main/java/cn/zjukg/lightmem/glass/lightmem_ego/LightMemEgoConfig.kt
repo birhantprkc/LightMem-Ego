@@ -20,4 +20,5 @@ object LightMemEgoConfig {
     const val JPEG_QUALITY = 75
     const val AUDIO_SAMPLE_RATE = 16_000
     const val ROKID_CHANNEL_COUNT = 8
+    const val ANSWER_TTS_ENABLED = false
 }
