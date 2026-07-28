@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import fcntl
 import json
+import os
+import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from online_preprocess.io_utils import read_json, utc_now_iso, write_json_atomic
 from online_short_term.schemas import (
@@ -20,7 +24,9 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     events = []
-    with path.open("r", encoding="utf-8") as f:
+    # Historical concurrent writers may have left isolated invalid bytes. Keep
+    # the session readable; the next atomic save rewrites valid UTF-8.
+    with path.open("r", encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -36,9 +42,34 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _write_jsonl(path: Path, events: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        for event in events:
-            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with temp_path.open("w", encoding="utf-8") as f:
+            for event in events:
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+_MUTATION_LOCKS: dict[str, threading.RLock] = {}
+_MUTATION_LOCKS_GUARD = threading.Lock()
+_MUTATION_LOCK_LOCAL = threading.local()
+
+
+def _process_mutation_lock(path: Path) -> threading.RLock:
+    key = str(path)
+    with _MUTATION_LOCKS_GUARD:
+        lock = _MUTATION_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _MUTATION_LOCKS[key] = lock
+        return lock
 
 
 class MSTStore:
@@ -62,9 +93,39 @@ class MSTStore:
         self.refine_dir = self.short_term_dir / "refine"
         self.refine_state_path = self.refine_dir / "refine_state.json"
         self.ready_windows_path = self.refine_dir / "refined_ready_windows.json"
+        self.mutation_lock_path = self.short_term_dir / "mst_store.lock"
         self.recent_window_seconds = recent_window_seconds or env_float("EM2MEM_MST_RECENT_WINDOW_SECONDS", 1800.0)
         self.max_events = max_events or env_int("EM2MEM_MST_MAX_EVENTS", 1000)
         self.archive_max_events = archive_max_events if archive_max_events is not None else env_int("EM2MEM_MST_ARCHIVE_MAX_EVENTS", 0)
+
+    @contextmanager
+    def mutation_lock(self) -> Iterator[None]:
+        """Serialize M_st mutations across threads and worker processes."""
+
+        key = str(self.mutation_lock_path)
+        with _process_mutation_lock(self.mutation_lock_path):
+            depths = getattr(_MUTATION_LOCK_LOCAL, "depths", None)
+            if depths is None:
+                depths = {}
+                _MUTATION_LOCK_LOCAL.depths = depths
+            depth = int(depths.get(key, 0) or 0)
+            if depth > 0:
+                depths[key] = depth + 1
+                try:
+                    yield
+                finally:
+                    depths[key] -= 1
+                return
+
+            self.short_term_dir.mkdir(parents=True, exist_ok=True)
+            with self.mutation_lock_path.open("a+", encoding="utf-8") as handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                depths[key] = 1
+                try:
+                    yield
+                finally:
+                    depths.pop(key, None)
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     @classmethod
     def from_session(cls, session_id: str, sessions_root: str | Path = DEFAULT_SESSIONS_ROOT) -> "MSTStore":
@@ -76,65 +137,71 @@ class MSTStore:
         return bool(state.get("short_term_ready")) and self.events_path.exists()
 
     def load_events(self) -> list[dict[str, Any]]:
-        return [self.normalize_event(event) for event in _load_jsonl(self.events_path)]
+        with self.mutation_lock():
+            return [self.normalize_event(event) for event in _load_jsonl(self.events_path)]
 
     def load_archive_events(self) -> list[dict[str, Any]]:
-        return [self.normalize_event(event) for event in _load_jsonl(self.archive_events_path)]
+        with self.mutation_lock():
+            return [self.normalize_event(event) for event in _load_jsonl(self.archive_events_path)]
 
     def save_events(self, events: list[dict[str, Any]]) -> None:
-        events = [self.normalize_event(event) for event in events]
-        events = self.evict_old_events(events)
-        _write_jsonl(self.events_path, events)
-        self._write_index(events)
-        self._write_state(events)
+        with self.mutation_lock():
+            events = [self.normalize_event(event) for event in events]
+            events = self.evict_old_events(events)
+            _write_jsonl(self.events_path, events)
+            self._write_index(events)
+            self._write_state(events)
 
     def save_archive_events(self, events: list[dict[str, Any]], bump_version: bool = True) -> None:
-        events = [self.normalize_event(event) for event in events]
-        events = sorted(events, key=lambda item: (float(item.get("start_time", 0.0)), str(item.get("event_id", ""))))
-        if self.archive_max_events and self.archive_max_events > 0 and len(events) > self.archive_max_events:
-            events = events[-self.archive_max_events :]
-        _write_jsonl(self.archive_events_path, events)
-        self._write_archive_state(events, bump_version=bump_version)
+        with self.mutation_lock():
+            events = [self.normalize_event(event) for event in events]
+            events = sorted(events, key=lambda item: (float(item.get("start_time", 0.0)), str(item.get("event_id", ""))))
+            if self.archive_max_events and self.archive_max_events > 0 and len(events) > self.archive_max_events:
+                events = events[-self.archive_max_events :]
+            _write_jsonl(self.archive_events_path, events)
+            self._write_archive_state(events, bump_version=bump_version)
 
     def append_events(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not events:
             return []
-        self.short_term_dir.mkdir(parents=True, exist_ok=True)
-        incoming = [self.normalize_event(event) for event in events]
-        active = self._merge_by_event_id(self.load_events(), incoming)
-        archive_error = None
-        try:
-            archive = self._merge_by_event_id(self.load_archive_events(), incoming)
-            self.save_archive_events(archive, bump_version=True)
-        except Exception as exc:  # active must stay usable even if archive fails
-            archive_error = str(exc)
-        self.save_events(active)
-        if archive_error:
-            state = self.get_state()
-            pending = list(state.get("pending_archive_event_ids", []) or [])
-            pending.extend(event["event_id"] for event in incoming)
-            state["pending_archive_event_ids"] = list(dict.fromkeys(pending))[-100:]
-            state["archive_error"] = archive_error
-            write_json_atomic(self.state_path, state)
-        return incoming
+        with self.mutation_lock():
+            self.short_term_dir.mkdir(parents=True, exist_ok=True)
+            incoming = [self.normalize_event(event) for event in events]
+            active = self._merge_by_event_id(self.load_events(), incoming)
+            archive_error = None
+            try:
+                archive = self._merge_by_event_id(self.load_archive_events(), incoming)
+                self.save_archive_events(archive, bump_version=True)
+            except Exception as exc:  # active must stay usable even if archive fails
+                archive_error = str(exc)
+            self.save_events(active)
+            if archive_error:
+                state = self.get_state()
+                pending = list(state.get("pending_archive_event_ids", []) or [])
+                pending.extend(event["event_id"] for event in incoming)
+                state["pending_archive_event_ids"] = list(dict.fromkeys(pending))[-100:]
+                state["archive_error"] = archive_error
+                write_json_atomic(self.state_path, state)
+            return incoming
 
     def update_events(self, updates: list[dict[str, Any]]) -> dict[str, bool]:
         if not updates:
             return {"active_updated": False, "archive_updated": False}
-        normalized = [self.normalize_event(event) for event in updates]
-        active_before = self.load_events()
-        archive_before = self.load_archive_events()
-        active_ids = {str(event.get("event_id")) for event in active_before if event.get("event_id")}
-        active_updates = [event for event in normalized if str(event.get("event_id")) in active_ids]
-        active_after = self._merge_by_event_id(active_before, active_updates)
-        archive_after = self._merge_by_event_id(archive_before, normalized)
-        active_updated = json.dumps(active_before, sort_keys=True, ensure_ascii=False) != json.dumps(active_after, sort_keys=True, ensure_ascii=False)
-        archive_updated = json.dumps(archive_before, sort_keys=True, ensure_ascii=False) != json.dumps(archive_after, sort_keys=True, ensure_ascii=False)
-        if archive_updated:
-            self.save_archive_events(archive_after, bump_version=True)
-        if active_updated:
-            self.save_events(active_after)
-        return {"active_updated": active_updated, "archive_updated": archive_updated}
+        with self.mutation_lock():
+            normalized = [self.normalize_event(event) for event in updates]
+            active_before = self.load_events()
+            archive_before = self.load_archive_events()
+            active_ids = {str(event.get("event_id")) for event in active_before if event.get("event_id")}
+            active_updates = [event for event in normalized if str(event.get("event_id")) in active_ids]
+            active_after = self._merge_by_event_id(active_before, active_updates)
+            archive_after = self._merge_by_event_id(archive_before, normalized)
+            active_updated = json.dumps(active_before, sort_keys=True, ensure_ascii=False) != json.dumps(active_after, sort_keys=True, ensure_ascii=False)
+            archive_updated = json.dumps(archive_before, sort_keys=True, ensure_ascii=False) != json.dumps(archive_after, sort_keys=True, ensure_ascii=False)
+            if archive_updated:
+                self.save_archive_events(archive_after, bump_version=True)
+            if active_updated:
+                self.save_events(active_after)
+            return {"active_updated": active_updated, "archive_updated": archive_updated}
 
     def backfill_transcript_segments(
         self,
@@ -150,61 +217,62 @@ class MSTStore:
                 "needs_reconsolidation_windows": [],
                 "updated_events": [],
             }
-        archive_events = self.load_archive_events()
-        active_ids = {str(event.get("event_id")) for event in self.load_events() if event.get("event_id")}
-        updated_events: list[dict[str, Any]] = []
-        needs_refine: list[str] = []
-        recon_windows: list[dict[str, Any]] = []
-        now = utc_now_iso()
-        for event in archive_events:
-            event_start = float(event.get("start_time", 0.0) or 0.0)
-            event_end = float(event.get("end_time", event_start) or event_start)
-            matched = [
-                seg
-                for seg in normalized_segments
-                if max(event_start, float(seg.get("start", 0.0) or 0.0))
-                <= min(event_end, float(seg.get("end", seg.get("start", 0.0)) or 0.0))
-            ]
-            if not matched:
-                continue
-            merged_segments = self._merge_transcript_segments(list(event.get("transcript_segments", []) or []), matched)
-            updated = dict(event)
-            updated["transcript_segments"] = merged_segments
-            updated["transcript"] = " ".join(str(seg.get("text") or "").strip() for seg in merged_segments if seg.get("text")).strip()
-            updated["transcript_version"] = int(updated.get("transcript_version", 0) or 0) + 1
-            updated["transcript_updated_at"] = now
-            updated["transcript_source"] = reason
-            updated["version"] = int(updated.get("version", 1) or 1) + 1
-            updated["updated_at"] = now
-            status = str(updated.get("status") or "provisional")
-            if status in {"provisional", "refine_failed", "refined", "final"}:
-                updated["needs_refine"] = True
-                if status in {"refined", "final"}:
-                    updated["refined_stale"] = True
-                    updated["stale_reason"] = "transcript_backfill"
-                event_id = str(updated.get("event_id") or "")
-                if event_id:
-                    needs_refine.append(event_id)
-            if bool(updated.get("merged_to_long_term")):
-                updated["needs_reconsolidation"] = True
-                updated["dirty_reason"] = "transcript_backfill"
-                window = self._transcript_dirty_window_for_event(updated)
-                updated["dirty_window_id"] = window["window_id"]
-                updated["dirty_time_range"] = [window["start_time"], window["end_time"]]
-                recon_windows.append(window)
-            updated["retrieval_text"] = build_retrieval_text(updated)
-            updated_events.append(updated)
+        with self.mutation_lock():
+            archive_events = self.load_archive_events()
+            active_ids = {str(event.get("event_id")) for event in self.load_events() if event.get("event_id")}
+            updated_events: list[dict[str, Any]] = []
+            needs_refine: list[str] = []
+            recon_windows: list[dict[str, Any]] = []
+            now = utc_now_iso()
+            for event in archive_events:
+                event_start = float(event.get("start_time", 0.0) or 0.0)
+                event_end = float(event.get("end_time", event_start) or event_start)
+                matched = [
+                    seg
+                    for seg in normalized_segments
+                    if max(event_start, float(seg.get("start", 0.0) or 0.0))
+                    <= min(event_end, float(seg.get("end", seg.get("start", 0.0)) or 0.0))
+                ]
+                if not matched:
+                    continue
+                merged_segments = self._merge_transcript_segments(list(event.get("transcript_segments", []) or []), matched)
+                updated = dict(event)
+                updated["transcript_segments"] = merged_segments
+                updated["transcript"] = " ".join(str(seg.get("text") or "").strip() for seg in merged_segments if seg.get("text")).strip()
+                updated["transcript_version"] = int(updated.get("transcript_version", 0) or 0) + 1
+                updated["transcript_updated_at"] = now
+                updated["transcript_source"] = reason
+                updated["version"] = int(updated.get("version", 1) or 1) + 1
+                updated["updated_at"] = now
+                status = str(updated.get("status") or "provisional")
+                if status in {"provisional", "refine_failed", "refined", "final"}:
+                    updated["needs_refine"] = True
+                    if status in {"refined", "final"}:
+                        updated["refined_stale"] = True
+                        updated["stale_reason"] = "transcript_backfill"
+                    event_id = str(updated.get("event_id") or "")
+                    if event_id:
+                        needs_refine.append(event_id)
+                if bool(updated.get("merged_to_long_term")):
+                    updated["needs_reconsolidation"] = True
+                    updated["dirty_reason"] = "transcript_backfill"
+                    window = self._transcript_dirty_window_for_event(updated)
+                    updated["dirty_window_id"] = window["window_id"]
+                    updated["dirty_time_range"] = [window["start_time"], window["end_time"]]
+                    recon_windows.append(window)
+                updated["retrieval_text"] = build_retrieval_text(updated)
+                updated_events.append(updated)
 
-        update_result = self.update_events(updated_events) if updated_events else {"active_updated": False, "archive_updated": False}
-        return {
-            "backfilled_event_count": len(updated_events),
-            "updated_event_ids": [str(event.get("event_id")) for event in updated_events if event.get("event_id")],
-            "active_updated_event_ids": [str(event.get("event_id")) for event in updated_events if str(event.get("event_id")) in active_ids],
-            "needs_refine_event_ids": list(dict.fromkeys(needs_refine)),
-            "needs_reconsolidation_windows": self._dedupe_windows(recon_windows),
-            "updated_events": updated_events,
-            "update_result": update_result,
-        }
+            update_result = self.update_events(updated_events) if updated_events else {"active_updated": False, "archive_updated": False}
+            return {
+                "backfilled_event_count": len(updated_events),
+                "updated_event_ids": [str(event.get("event_id")) for event in updated_events if event.get("event_id")],
+                "active_updated_event_ids": [str(event.get("event_id")) for event in updated_events if str(event.get("event_id")) in active_ids],
+                "needs_refine_event_ids": list(dict.fromkeys(needs_refine)),
+                "needs_reconsolidation_windows": self._dedupe_windows(recon_windows),
+                "updated_events": updated_events,
+                "update_result": update_result,
+            }
 
     def normalize_event(self, event: dict[str, Any]) -> dict[str, Any]:
         item = dict(event)
@@ -378,37 +446,38 @@ class MSTStore:
         }
 
     def clear(self, clear_archive: bool = False) -> dict[str, Any]:
-        self.short_term_dir.mkdir(parents=True, exist_ok=True)
-        for path in (self.events_path, self.index_path, self.id_mapping_path):
-            if path.exists():
-                path.unlink()
-        if clear_archive:
-            for path in (self.archive_events_path, self.archive_state_path, self.refine_state_path, self.ready_windows_path):
+        with self.mutation_lock():
+            self.short_term_dir.mkdir(parents=True, exist_ok=True)
+            for path in (self.events_path, self.index_path, self.id_mapping_path):
                 if path.exists():
                     path.unlink()
-        state = {
-            "session_id": self.session_id,
-            "short_term_ready": False,
-            "mst_version": 0,
-            "archive_version": 0 if clear_archive else self.get_archive_state().get("archive_version", 0),
-            "last_event_start": 0.0,
-            "last_processed_time": 0.0,
-            "event_count": 0,
-            "active_event_count": 0,
-            "archive_event_count": 0 if clear_archive else self.get_archive_state().get("archive_event_count", 0),
-            "recent_window_seconds": self.recent_window_seconds,
-            "max_events": self.max_events,
-            "archive_max_events": self.archive_max_events,
-            "active_path": rel_to_session(self.session_dir, self.events_path),
-            "archive_path": rel_to_session(self.session_dir, self.archive_events_path),
-            "active_time_span": [0.0, 0.0],
-            "archive_time_span": [0.0, 0.0] if clear_archive else self.get_archive_state().get("archive_time_span", [0.0, 0.0]),
-            "updated_at": utc_now_iso(),
-        }
-        write_json_atomic(self.state_path, state)
-        if clear_archive:
-            self._write_archive_state([], bump_version=False)
-        return state
+            if clear_archive:
+                for path in (self.archive_events_path, self.archive_state_path, self.refine_state_path, self.ready_windows_path):
+                    if path.exists():
+                        path.unlink()
+            state = {
+                "session_id": self.session_id,
+                "short_term_ready": False,
+                "mst_version": 0,
+                "archive_version": 0 if clear_archive else self.get_archive_state().get("archive_version", 0),
+                "last_event_start": 0.0,
+                "last_processed_time": 0.0,
+                "event_count": 0,
+                "active_event_count": 0,
+                "archive_event_count": 0 if clear_archive else self.get_archive_state().get("archive_event_count", 0),
+                "recent_window_seconds": self.recent_window_seconds,
+                "max_events": self.max_events,
+                "archive_max_events": self.archive_max_events,
+                "active_path": rel_to_session(self.session_dir, self.events_path),
+                "archive_path": rel_to_session(self.session_dir, self.archive_events_path),
+                "active_time_span": [0.0, 0.0],
+                "archive_time_span": [0.0, 0.0] if clear_archive else self.get_archive_state().get("archive_time_span", [0.0, 0.0]),
+                "updated_at": utc_now_iso(),
+            }
+            write_json_atomic(self.state_path, state)
+            if clear_archive:
+                self._write_archive_state([], bump_version=False)
+            return state
 
     def _write_state(self, events: list[dict[str, Any]]) -> None:
         old_state = self.get_state()

@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
@@ -66,6 +67,7 @@ data class LightMemEgoGlassUiState(
     val queryTaskId: String = "",
     val lastQuestion: String = "",
     val answer: String = "",
+    val answerAudioUrl: String = "",
     val answerLatencyMs: Long? = null,
     val voiceQuestionRecording: Boolean = false,
     val voiceQuestionStatus: String = "idle",
@@ -75,6 +77,11 @@ data class LightMemEgoGlassUiState(
     val quickQuestions: List<String> = LightMemEgoConfig.PRESET_QUESTIONS,
     val selectedQuestionIndex: Int = 0,
     val selectedQuestion: String = LightMemEgoConfig.PRESET_QUESTIONS.firstOrNull().orEmpty(),
+)
+
+private data class AnswerDelivery(
+    val answer: String,
+    val answerAudioUrl: String,
 )
 
 class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(application) {
@@ -113,6 +120,8 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
     private var statusJob: Job? = null
     private var queryJob: Job? = null
     private var recorder: AudioRecord? = null
+    private val answerPlayerLock = Any()
+    private var answerPlayer: MediaPlayer? = null
     private val voiceQuestionLock = Any()
     private var voiceQuestionPcm = ByteArrayOutputStream()
     private var voiceQuestionStartElapsedMs = 0L
@@ -220,6 +229,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
 
         val answerStartedElapsedMs = SystemClock.elapsedRealtime()
         queryJob?.cancel()
+        releaseAnswerPlayer()
         _uiState.update {
             it.copy(
                 asking = true,
@@ -227,6 +237,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                 queryTaskId = "",
                 lastQuestion = question,
                 answer = "",
+                answerAudioUrl = "",
                 answerLatencyMs = null,
                 voiceQuestionStatus = "idle",
                 voiceQuestionText = "",
@@ -246,23 +257,25 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                     }
                 }
                 when {
-                    result.answer.isNotBlank() -> result.answer
+                    result.answer.isNotBlank() -> AnswerDelivery(result.answer, result.answerAudioUrl)
                     result.queued && result.taskId.isNotBlank() -> pollQueryAnswer(result.taskId)
-                    else -> "Backend returned no answer"
+                    else -> AnswerDelivery("Backend returned no answer", result.answerAudioUrl)
                 }
-            }.onSuccess { answer ->
+            }.onSuccess { delivery ->
                 val latencyMs = (SystemClock.elapsedRealtime() - answerStartedElapsedMs).coerceAtLeast(0L)
                 _uiState.update {
                     it.copy(
                         asking = false,
                         queryStatus = "done",
                         queryTaskId = "",
-                        answer = answer,
+                        answer = delivery.answer,
+                        answerAudioUrl = delivery.answerAudioUrl,
                         answerLatencyMs = latencyMs,
                         lastQuestion = question,
                         lastError = "",
                     )
                 }
+                playAnswerAudio(delivery.answerAudioUrl)
             }.onFailure { error ->
                 if (error is CancellationException) return@launch
                 _uiState.update {
@@ -271,6 +284,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                         queryStatus = "failed",
                         queryTaskId = "",
                         answer = "",
+                        answerAudioUrl = "",
                         answerLatencyMs = null,
                         lastError = error.message ?: "Preset question failed",
                     )
@@ -322,6 +336,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                 voiceQuestionMessage = "",
                 voiceQuestionDurationMs = 0L,
                 answer = "",
+                answerAudioUrl = "",
                 answerLatencyMs = null,
                 lastError = "",
             )
@@ -363,6 +378,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
         var recognizedVoiceQuestion = ""
         val answerStartedElapsedMs = SystemClock.elapsedRealtime()
         queryJob?.cancel()
+        releaseAnswerPlayer()
         _uiState.update {
             it.copy(
                 asking = true,
@@ -370,6 +386,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                 queryTaskId = "",
                 lastQuestion = "",
                 answer = "",
+                answerAudioUrl = "",
                 answerLatencyMs = null,
                 voiceQuestionStatus = "transcribing",
                 voiceQuestionText = "",
@@ -396,11 +413,11 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                     )
                 }
                 when {
-                    result.answer.isNotBlank() -> result.answer
+                    result.answer.isNotBlank() -> AnswerDelivery(result.answer, result.answerAudioUrl)
                     result.queued && result.taskId.isNotBlank() -> pollQueryAnswer(result.taskId)
-                    else -> "Backend returned no answer"
+                    else -> AnswerDelivery("Backend returned no answer", result.answerAudioUrl)
                 }
-            }.onSuccess { answer ->
+            }.onSuccess { delivery ->
                 val latencyMs = (SystemClock.elapsedRealtime() - answerStartedElapsedMs).coerceAtLeast(0L)
                 _uiState.update {
                     it.copy(
@@ -409,12 +426,14 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                         queryTaskId = "",
                         voiceQuestionStatus = "done",
                         voiceQuestionMessage = "",
-                        answer = answer,
+                        answer = delivery.answer,
+                        answerAudioUrl = delivery.answerAudioUrl,
                         answerLatencyMs = latencyMs,
                         lastQuestion = recognizedVoiceQuestion,
                         lastError = "",
                     )
                 }
+                playAnswerAudio(delivery.answerAudioUrl)
             }.onFailure { error ->
                 if (error is CancellationException) return@launch
                 _uiState.update {
@@ -425,6 +444,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                         voiceQuestionStatus = "failed",
                         voiceQuestionMessage = error.message ?: "Voice question failed",
                         answer = "",
+                        answerAudioUrl = "",
                         answerLatencyMs = null,
                         lastError = error.message ?: "Voice question failed",
                     )
@@ -476,6 +496,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                     _uiState.update {
                         it.copy(
                             answer = finalAnswer,
+                            answerAudioUrl = event.answerAudioUrl.ifBlank { it.answerAudioUrl },
                             queryStatus = "streaming",
                             voiceQuestionStatus = if (isVoice) "asking" else it.voiceQuestionStatus,
                             lastError = "",
@@ -485,9 +506,11 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
             }
             "done" -> {
                 val finalAnswer = event.answer.ifBlank { event.text }
+                val finalAnswerAudioUrl = event.answerAudioUrl
                 _uiState.update {
                     it.copy(
                         answer = finalAnswer.ifBlank { it.answer },
+                        answerAudioUrl = finalAnswerAudioUrl.ifBlank { it.answerAudioUrl },
                         queryStatus = if (event.status == "error") "failed" else "done",
                         voiceQuestionStatus = if (isVoice) {
                             if (event.status == "error") "failed" else "done"
@@ -496,6 +519,9 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                         },
                         lastError = if (event.status == "error") event.message else "",
                     )
+                }
+                if (event.status != "error") {
+                    playAnswerAudio(finalAnswerAudioUrl.ifBlank { _uiState.value.answerAudioUrl })
                 }
             }
             "error" -> {
@@ -525,7 +551,8 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
         }
         if (streaming || stopping) return
         queryJob?.cancel()
-        _uiState.update { it.copy(status = "connecting", asking = false, queryStatus = "idle", queryTaskId = "", answer = "", lastError = "") }
+        releaseAnswerPlayer()
+        _uiState.update { it.copy(status = "connecting", asking = false, queryStatus = "idle", queryTaskId = "", answer = "", answerAudioUrl = "", lastError = "") }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 startPreferredRokidSession()
@@ -574,6 +601,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                         queryTaskId = "",
                         lastQuestion = "",
                         answer = "",
+                        answerAudioUrl = "",
                         lastError = "",
                     )
                 }
@@ -602,6 +630,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
             queryJob?.cancel()
             queryJob = null
             cancelVoiceQuestionCapture()
+            releaseAnswerPlayer()
             releaseRecorder()
             if (sessionId.isNotBlank()) {
                 runCatching { api.endStream(sessionId) }
@@ -618,6 +647,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                     streamStatus = "stopped",
                     canAsk = false,
                     memoryReady = false,
+                    answerAudioUrl = "",
                 )
             }
         }
@@ -786,13 +816,16 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
         return api.uploadAudioChunk(sessionId, wavBytes, audioIndex, relativeTsMs, durationMs)
     }
 
-    private suspend fun pollQueryAnswer(taskId: String): String {
+    private suspend fun pollQueryAnswer(taskId: String): AnswerDelivery {
         val maxAttempts = (LightMemEgoConfig.QUERY_POLL_TIMEOUT_MS / LightMemEgoConfig.QUERY_POLL_INTERVAL_MS).toInt().coerceAtLeast(1)
         repeat(maxAttempts) {
             val task = api.getQueryTask(taskId)
             _uiState.update { it.copy(queryStatus = task.status.ifBlank { "running" }) }
             if (task.done) {
-                return task.answer.ifBlank { "Backend returned no answer" }
+                return AnswerDelivery(
+                    answer = task.answer.ifBlank { "Backend returned no answer" },
+                    answerAudioUrl = task.answerAudioUrl,
+                )
             }
             if (task.status in setOf("failed", "cancelled", "canceled", "aborted", "not_found")) {
                 throw IllegalStateException(task.message.ifBlank { "Question task failed: ${task.status}" })
@@ -928,12 +961,81 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
         recorder = null
     }
 
+    private fun playAnswerAudio(answerAudioUrl: String) {
+        val resolvedUrl = answerAudioUrl.trim().takeIf { it.isNotBlank() }?.let { api.resolveUrl(it) } ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val player = MediaPlayer().apply {
+                    setDataSource(resolvedUrl)
+                    setOnCompletionListener { completedPlayer ->
+                        clearAnswerPlayer(completedPlayer)
+                    }
+                    setOnErrorListener { errorPlayer, what, extra ->
+                        LightMemEgoDiagnostics.log(
+                            getApplication(),
+                            "answer-audio-playback-error",
+                            "what=$what extra=$extra url=$resolvedUrl",
+                        )
+                        clearAnswerPlayer(errorPlayer)
+                        true
+                    }
+                    prepare()
+                }
+                val previous = synchronized(answerPlayerLock) {
+                    val old = answerPlayer
+                    answerPlayer = player
+                    old
+                }
+                releaseMediaPlayer(previous, stopFirst = true)
+                synchronized(answerPlayerLock) {
+                    if (answerPlayer === player) {
+                        player.start()
+                    }
+                }
+            }.onFailure { error ->
+                LightMemEgoDiagnostics.logError(getApplication(), "answer-audio-playback-failed", resolvedUrl, error)
+            }
+        }
+    }
+
+    private fun clearAnswerPlayer(player: MediaPlayer) {
+        val shouldRelease = synchronized(answerPlayerLock) {
+            if (answerPlayer === player) {
+                answerPlayer = null
+                true
+            } else {
+                false
+            }
+        }
+        if (shouldRelease) {
+            releaseMediaPlayer(player, stopFirst = false)
+        }
+    }
+
+    private fun releaseAnswerPlayer() {
+        val player = synchronized(answerPlayerLock) {
+            val current = answerPlayer
+            answerPlayer = null
+            current
+        }
+        releaseMediaPlayer(player, stopFirst = true)
+    }
+
+    private fun releaseMediaPlayer(player: MediaPlayer?, stopFirst: Boolean) {
+        if (player == null) return
+        if (stopFirst) {
+            runCatching { player.stop() }
+        }
+        runCatching { player.release() }
+    }
+
     override fun onCleared() {
         streaming = false
         audioJob?.cancel()
         statusJob?.cancel()
         queryJob?.cancel()
         cancelVoiceQuestionCapture()
+        releaseAnswerPlayer()
         releaseRecorder()
         super.onCleared()
     }

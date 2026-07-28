@@ -15,6 +15,12 @@ if [ -f ".env" ]; then
   set +a
 fi
 
+# Query warmup and all queued/streaming queries share this worker's engine
+# cache. Keep text embeddings in the dedicated service to avoid loading the
+# Qwen3 model into every query-serving process.
+export EM2MEM_TEXT_EMBED_BACKEND="${EM2MEM_TEXT_EMBED_BACKEND:-remote}"
+export EM2MEM_TEXT_EMBED_URL="${EM2MEM_TEXT_EMBED_URL:-http://${EM2MEM_TEXT_EMBED_HOST:-127.0.0.1}:${EM2MEM_TEXT_EMBED_PORT:-18096}}"
+
 if [ -z "${CUDA_VISIBLE_DEVICES:-}" ] && [ -n "${EM2MEM_QUERY_CUDA_VISIBLE_DEVICES:-}" ]; then
   export CUDA_VISIBLE_DEVICES="${EM2MEM_QUERY_CUDA_VISIBLE_DEVICES}"
 elif [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
@@ -25,7 +31,11 @@ DEFAULT_VLM2VEC_MODEL_PATH="$PROJECT_ROOT/models/VLM2Vec-V2.0"
 if [ -z "${EM2MEM_VLM2VEC_MODEL_PATH:-}" ] || [ "${EM2MEM_VLM2VEC_MODEL_PATH:-}" = "/path/to/vlm2vec-v2" ]; then
   export EM2MEM_VLM2VEC_MODEL_PATH="${EM2MEM_VIS_EMBED_MODEL:-$DEFAULT_VLM2VEC_MODEL_PATH}"
 fi
-export EM2MEM_PRELOAD_VLM2VEC="${EM2MEM_PRELOAD_VLM2VEC:-1}"
+if [[ "${EM2MEM_AUTO_VISUAL_EMBEDDING:-1}" =~ ^(0|false|FALSE|no|NO|off|OFF)$ ]]; then
+  export EM2MEM_PRELOAD_VLM2VEC="${EM2MEM_PRELOAD_VLM2VEC:-0}"
+else
+  export EM2MEM_PRELOAD_VLM2VEC="${EM2MEM_PRELOAD_VLM2VEC:-1}"
+fi
 export EM2MEM_QUERY_CACHE_MAX_SESSIONS="${EM2MEM_QUERY_CACHE_MAX_SESSIONS:-1}"
 export EM2MEM_PRELOAD_RECENT_MEMORY_READY="${EM2MEM_PRELOAD_RECENT_MEMORY_READY:-1}"
 export EM2MEM_QUERY_STRICT_LOAD_ONLY="${EM2MEM_QUERY_STRICT_LOAD_ONLY:-1}"

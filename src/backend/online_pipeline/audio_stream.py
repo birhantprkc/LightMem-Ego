@@ -283,7 +283,7 @@ class AudioStreamStore:
             if not asr_state:
                 asr_state = self._empty_asr_state(stream_id=stream_id or "")
             asr_state["enabled"] = bool(enabled)
-            asr_state["backend"] = os.getenv("EM2MEM_AUDIO_ASR_BACKEND", asr_state.get("backend", "whisperx"))
+            asr_state["backend"] = os.getenv("EM2MEM_AUDIO_ASR_BACKEND", asr_state.get("backend", "xfyun"))
             if not enabled:
                 asr_state["asr_status"] = "not_started"
                 asr_state["updated_at"] = utc_now_iso()
@@ -370,7 +370,7 @@ class AudioStreamStore:
                 processing_chunks=[],
                 global_start_time=window_start / 1000.0,
                 global_end_time=window_end / 1000.0,
-                asr_backend=str(os.getenv("EM2MEM_AUDIO_ASR_BACKEND") or asr_state.get("backend") or "whisperx"),
+                asr_backend=str(os.getenv("EM2MEM_AUDIO_ASR_BACKEND") or asr_state.get("backend") or "xfyun"),
                 reason="audio_chunk_rolling_asr",
                 source="audio_chunk_window",
                 window_id=window_id,
@@ -500,7 +500,7 @@ class AudioStreamStore:
                 processing_chunks=[],
                 global_start_time=window_start / 1000.0,
                 global_end_time=window_end / 1000.0,
-                asr_backend=str(os.getenv("EM2MEM_AUDIO_ASR_BACKEND") or asr_state.get("backend") or "whisperx"),
+                asr_backend=str(os.getenv("EM2MEM_AUDIO_ASR_BACKEND") or asr_state.get("backend") or "xfyun"),
                 reason="audio_chunk_rolling_asr_flush",
                 source="audio_chunk_window",
                 window_id=window_id,
@@ -726,7 +726,7 @@ class AudioStreamStore:
             "session_id": self.session_dir.name,
             "stream_id": stream_id,
             "enabled": _env_bool("EM2MEM_AUDIO_ASR_ENABLED", True),
-            "backend": os.getenv("EM2MEM_AUDIO_ASR_BACKEND", "whisperx"),
+            "backend": os.getenv("EM2MEM_AUDIO_ASR_BACKEND", "xfyun"),
             "window_ms": _env_int("EM2MEM_AUDIO_ASR_WINDOW_MS", 3000),
             "hop_ms": _env_int("EM2MEM_AUDIO_ASR_HOP_MS", 3000),
             "min_window_ms": _env_int("EM2MEM_AUDIO_ASR_MIN_WINDOW_MS", 2000),

@@ -2,7 +2,6 @@ import asyncio
 import json
 import os
 import threading
-import subprocess
 import hashlib
 import mimetypes
 from datetime import datetime, timezone
@@ -24,10 +23,12 @@ from online_preprocess.task_queue import (
     enqueue_preprocess_task,
     enqueue_query_task,
     enqueue_query_warmup_task,
+    enqueue_stream_asr_task,
     ensure_queue_dirs,
     get_queue_dirs,
 )
 from online_pipeline.stream_timeline import append_timeline_event
+from online_query.stream_transport import query_stream_events_path, read_query_stream_events
 from online_retrieval_scheme import normalize_long_term_retrieval_scheme
 from online_qa_history import append_qa_history, load_qa_history, qa_history_path
 
@@ -35,7 +36,14 @@ from online_qa_history import append_qa_history, load_qa_history, qa_history_pat
 PROJECT_ROOT = Path(__file__).resolve().parent
 ONLINE_SESSIONS_DIR = PROJECT_ROOT / "online_sessions"
 CHUNK_SIZE_BYTES = 8 * 1024 * 1024
-ALLOWED_SESSION_FILE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+ALLOWED_SESSION_FILE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".mp3", ".wav"}
+ANSWER_AUDIO_RESPONSE_KEYS = (
+    "answer_audio_url",
+    "answer_audio_path",
+    "answer_audio_backend",
+    "answer_audio_media_type",
+    "answer_tts",
+)
 ROKID_ACTIVE_SESSION_PATH = Path("runtime") / "active_rokid_session.json"
 
 
@@ -63,157 +71,69 @@ app.add_middleware(
 )
 
 
-def _voice_question_asr_python() -> Path:
-    configured = os.getenv("EM2MEM_VOICE_QUESTION_ASR_PYTHON") or os.getenv("EM2MEM_WHISPERX_PYTHON")
-    return Path(configured) if configured else PROJECT_ROOT / ".venv_whisperx" / "bin" / "python"
+async def _run_voice_question_asr_via_worker(
+    *,
+    session_id: str,
+    stream_id: str,
+    question_id: str,
+    audio_path: Path,
+    output_srt: Path,
+    output_json: Path,
+    duration_ms: int | None,
+) -> list[dict[str, Any]]:
+    timeout_seconds = float(os.getenv("EM2MEM_VOICE_QUESTION_WORKER_ASR_TIMEOUT", "25") or 25)
+    if timeout_seconds <= 0:
+        raise RuntimeError("voice question worker ASR disabled by timeout")
 
-
-def _voice_question_model_name_or_path() -> str:
-    configured = os.getenv("EM2MEM_VOICE_QUESTION_MODEL") or os.getenv("EM2MEM_WHISPERX_MODEL") or "faster-whisper-medium"
-    configured_path = Path(configured)
-    if configured_path.is_absolute() and configured_path.exists():
-        return str(configured_path)
-    local_model = PROJECT_ROOT / "models" / "whisperx" / configured
-    if local_model.exists():
-        return str(local_model)
-    return configured
-
-
-def _voice_question_language_arg() -> str:
-    configured = os.getenv("EM2MEM_VOICE_QUESTION_LANGUAGE", "auto")
-    language = str(configured or "").strip()
-    if language.lower() in {"", "auto", "detect", "auto_detect", "auto-detect", "none", "null"}:
-        return ""
-    return language
-
-
-def _voice_question_initial_prompt(language: str) -> str:
-    configured = os.getenv("EM2MEM_VOICE_QUESTION_INITIAL_PROMPT")
-    if not language:
-        return ""
-    if configured is not None:
-        return str(configured)
-    if language.lower() in {"zh", "cn", "chinese", "zh-cn", "zh_hans", "zh-hans", "simplified_chinese"}:
-        return "以下是普通话简体中文语音，请输出简体中文。"
-    return ""
-
-
-def _run_voice_question_asr(audio_path: Path, output_srt: Path, output_json: Path) -> list[dict[str, Any]]:
-    asr_python = _voice_question_asr_python()
-    if not asr_python.exists():
-        raise RuntimeError(f"voice question ASR python not found: {asr_python}")
-
-    script = r'''
-import json
-import sys
-from pathlib import Path
-
-from faster_whisper import WhisperModel
-
-
-def parse_device(value):
-    if value.startswith("cuda:"):
-        return "cuda", int(value.split(":", 1)[1])
-    return value, 0
-
-
-def srt_time(seconds):
-    total_ms = max(0, int(round(float(seconds) * 1000)))
-    hours = total_ms // 3_600_000
-    minutes = (total_ms % 3_600_000) // 60_000
-    secs = (total_ms % 60_000) // 1_000
-    millis = total_ms % 1_000
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
-
-
-audio_path = Path(sys.argv[1])
-output_json = Path(sys.argv[2])
-output_srt = Path(sys.argv[3])
-model_name_or_path = sys.argv[4]
-device_arg = sys.argv[5]
-compute_type = sys.argv[6]
-language = sys.argv[7] or None
-beam_size = int(sys.argv[8])
-vad_filter = sys.argv[9].lower() in {"1", "true", "yes", "on"}
-initial_prompt = sys.argv[10] or None
-
-device, device_index = parse_device(device_arg)
-model = WhisperModel(
-    model_name_or_path,
-    device=device,
-    device_index=device_index,
-    compute_type=compute_type,
-)
-segments_iter, _info = model.transcribe(
-    str(audio_path),
-    language=language,
-    beam_size=beam_size,
-    vad_filter=vad_filter,
-    initial_prompt=initial_prompt,
-)
-segments = [
-    {"start": float(seg.start), "end": float(seg.end), "text": str(seg.text).strip()}
-    for seg in segments_iter
-    if str(seg.text).strip()
-]
-output_json.parent.mkdir(parents=True, exist_ok=True)
-output_json.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")
-srt_lines = []
-for idx, seg in enumerate(segments, start=1):
-    srt_lines.extend([
-        str(idx),
-        f"{srt_time(seg['start'])} --> {srt_time(seg['end'])}",
-        seg["text"],
-        "",
-    ])
-output_srt.write_text("\n".join(srt_lines), encoding="utf-8")
-print(json.dumps({"segments": segments}, ensure_ascii=False))
-'''
-    device = os.getenv("EM2MEM_VOICE_QUESTION_DEVICE") or os.getenv("EM2MEM_WHISPERX_DEVICE") or "cuda"
-    compute_type = os.getenv("EM2MEM_VOICE_QUESTION_COMPUTE_TYPE") or os.getenv("EM2MEM_WHISPERX_COMPUTE_TYPE") or "float16"
-    language = _voice_question_language_arg()
-    beam_size = os.getenv("EM2MEM_VOICE_QUESTION_BEAM_SIZE", "1")
-    vad_filter = os.getenv("EM2MEM_VOICE_QUESTION_VAD_FILTER", "0")
-    initial_prompt = _voice_question_initial_prompt(language)
-    cmd = [
-        str(asr_python),
-        "-c",
-        script,
-        str(audio_path),
-        str(output_json),
-        str(output_srt),
-        _voice_question_model_name_or_path(),
-        device,
-        compute_type,
-        language,
-        beam_size,
-        vad_filter,
-        initial_prompt,
-    ]
-
-    timeout_seconds = int(os.getenv("EM2MEM_VOICE_QUESTION_ASR_TIMEOUT", "60") or 60)
-    env = os.environ.copy()
-    ffmpeg_bin_dir = os.getenv("EM2MEM_FFMPEG_BIN_DIR", "/zjunlp/chenyijun/miniconda3/bin")
-    env["PATH"] = f"{ffmpeg_bin_dir}:{env.get('PATH', '')}"
-    completed = subprocess.run(
-        cmd,
-        cwd=str(PROJECT_ROOT),
-        text=True,
-        capture_output=True,
-        timeout=timeout_seconds,
-        env=env,
+    session_dir = ONLINE_SESSIONS_DIR / session_id
+    upload_rel = audio_path.relative_to(session_dir).as_posix()
+    upload_chunk_id = f"voice_question_{question_id}"
+    task_path = enqueue_stream_asr_task(
+        PROJECT_ROOT,
+        session_id=session_id,
+        stream_id=stream_id,
+        upload_chunk_id=upload_chunk_id,
+        upload_chunk_index=-1,
+        upload_chunk_path=upload_rel,
+        global_start_time=0.0,
+        global_end_time=round(float(duration_ms or 0) / 1000.0, 3),
+        asr_backend=os.getenv("EM2MEM_VOICE_QUESTION_ASR_BACKEND", "whisperx"),
+        reason="voice_question",
+        force=True,
+        source="voice_question",
+        window_id=upload_chunk_id,
+        duration_ms=duration_ms,
+        input_source="rokid_audio_question",
     )
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "voice question ASR failed").strip()
-        raise RuntimeError(detail[-1200:])
+    task_name = task_path.name
+    dirs = get_queue_dirs(PROJECT_ROOT)
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while asyncio.get_running_loop().time() < deadline:
+        done_path = dirs["stream_asr_done"] / task_name
+        if done_path.exists():
+            payload = read_json(done_path, default={})
+            result = payload.get("result") if isinstance(payload, dict) else {}
+            segments = result.get("segments") if isinstance(result, dict) else None
+            if not isinstance(segments, list):
+                segments = read_json(output_json, default=[])
+            if not isinstance(segments, list):
+                return []
+            for segment in segments:
+                if isinstance(segment, dict) and isinstance(segment.get("text"), str):
+                    segment["text"] = simplify_chinese_text(segment["text"])
+            return segments
 
-    segments = read_json(output_json, default=[])
-    if not isinstance(segments, list):
-        return []
-    for segment in segments:
-        if isinstance(segment, dict) and isinstance(segment.get("text"), str):
-            segment["text"] = simplify_chinese_text(segment["text"])
-    return segments
+        failed_path = dirs["stream_asr_failed"] / task_name
+        if failed_path.exists():
+            payload = read_json(failed_path, default={})
+            detail = ""
+            if isinstance(payload, dict):
+                detail = str(payload.get("error") or payload.get("message") or "")
+            raise RuntimeError(detail or "voice question worker ASR failed")
+
+        await asyncio.sleep(0.25)
+
+    raise TimeoutError(f"voice question worker ASR timed out after {timeout_seconds:.1f}s")
 
 
 def _start_query_warmup_thread(session_id: str, *, reason: str = "stream_start", wait_for_memory: bool = False) -> None:
@@ -262,6 +182,37 @@ def _json_response_content(response: JSONResponse) -> dict[str, Any]:
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _attach_answer_audio_for_response(
+    result: dict[str, Any],
+    session_id: str,
+    request: Any,
+    *,
+    task_id: str | None = None,
+) -> dict[str, Any]:
+    try:
+        from online_preprocess.tts_xfyun import attach_answer_audio_to_result
+
+        return attach_answer_audio_to_result(
+            result=result,
+            sessions_root=ONLINE_SESSIONS_DIR,
+            session_id=session_id,
+            client_source=str(getattr(request, "client_source", "") or ""),
+            input_method=str(getattr(request, "input_method", "") or ""),
+            task_id=task_id,
+        )
+    except Exception as exc:
+        result.setdefault(
+            "answer_tts",
+            {
+                "status": "failed",
+                "backend": "xfyun_tts",
+                "error": str(exc),
+                "created_at": utc_now_iso(),
+            },
+        )
+        return result
 
 
 def _rokid_day_session_enabled() -> bool:
@@ -482,158 +433,150 @@ async def _ask_streaming_response(
     allow_inactive_session: bool = False,
     task_source: str = "api_stream",
 ) -> StreamingResponse:
-    loop = asyncio.get_running_loop()
-    queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
-    terminal_sent = threading.Event()
     long_term_retrieval_scheme = normalize_long_term_retrieval_scheme(
         request.long_term_retrieval_scheme or request.retrieval_scheme
     )
-    stream_task = _new_stream_query_task(
-        session_id,
-        request,
-        long_term_retrieval_scheme,
-        allow_inactive_session=allow_inactive_session,
-        task_source=task_source,
-    )
+    try:
+        task_path = enqueue_query_task(
+            project_root=PROJECT_ROOT,
+            session_id=session_id,
+            question=request.question,
+            top_k=request.top_k,
+            retrieval_mode=request.retrieval_mode,
+            use_image_evidence=request.use_image_evidence,
+            max_image_frames=request.max_image_frames,
+            max_image_evidence=request.max_image_evidence,
+            text_top_k=request.text_top_k,
+            visual_top_k=request.visual_top_k,
+            final_evidence_k=request.final_evidence_k,
+            memory_mode=request.memory_mode,
+            use_interaction_cache=request.use_interaction_cache,
+            cache_mode=request.cache_mode,
+            use_current=request.use_current,
+            use_short_term=request.use_short_term,
+            use_long_term=request.use_long_term,
+            debug_router=request.debug_router,
+            long_term_retrieval_scheme=long_term_retrieval_scheme,
+            retrieval_scheme=request.retrieval_scheme,
+            client_source=request.client_source,
+            input_method=request.input_method,
+            answer_tts=request.answer_tts,
+            allow_inactive_session=allow_inactive_session,
+            task_source=task_source,
+            response_mode="stream",
+        )
+    except Exception as exc:
+        return _stream_error_response(session_id, request.question, f"failed to enqueue streaming query: {exc}")
 
-    def _put(event: str, data: Any) -> None:
-        loop.call_soon_threadsafe(queue.put_nowait, (event, data))
+    task_id = task_path.stem
+    stream_events_path = query_stream_events_path(PROJECT_ROOT, task_id)
+    dirs = ensure_queue_dirs(PROJECT_ROOT)
+    poll_seconds = max(0.02, float(os.getenv("EM2MEM_QUERY_STREAM_POLL_SECONDS", "0.05") or 0.05))
+    ping_seconds = max(1.0, float(os.getenv("EM2MEM_QUERY_STREAM_PING_SECONDS", "15") or 15))
+    timeout_seconds = max(1.0, float(os.getenv("EM2MEM_QUERY_STREAM_TIMEOUT_SECONDS", "600") or 600))
 
-    def _stream_handler(event: dict[str, Any]) -> None:
-        event_type = str(event.get("type") or "message")
-        _put(event_type, event)
-
-    def _terminal_done(result: dict[str, Any] | None = None, *, status: str = "ok", message: str | None = None) -> None:
-        if terminal_sent.is_set():
-            return
-        terminal_sent.set()
-        enhanced_result = _augment_evidence_frames_for_response(
-            {"result": result or {}},
-            session_id,
-            api_base_url=api_base_url,
-        ).get("result", {})
-        payload = {
-            "type": "done",
-            "status": status,
-            "result": normalize_user_visible_text_fields(enhanced_result),
-        }
-        if message:
-            payload["message"] = message
-        _put("done", payload)
-
-    def _worker() -> None:
+    async def _events():
+        started_at = asyncio.get_running_loop().time()
+        last_emit_at = started_at
+        offset = 0
+        pending = b""
+        error_emitted = False
+        terminal_seen = False
         try:
-            from online_query import query_session
-            from online_query.stream_query_context import load_stream_query_context
-
-            _put(
+            yield _sse_event(
                 "start",
                 {
                     "type": "start",
-                    "task_id": stream_task["task_id"],
+                    "task_id": task_id,
                     "session_id": session_id,
                     "question": request.question,
                     "response_mode": "stream",
+                    "query_process": "query_worker",
                     "long_term_retrieval_scheme": long_term_retrieval_scheme,
                 },
             )
-            result = query_session(
-                session_id=session_id,
-                question=request.question,
-                sessions_root=ONLINE_SESSIONS_DIR,
-                top_k=request.top_k,
-                retrieval_mode=request.retrieval_mode,
-                use_image_evidence=request.use_image_evidence,
-                max_image_frames=request.max_image_frames,
-                max_image_evidence=request.max_image_evidence,
-                text_top_k=request.text_top_k,
-                visual_top_k=request.visual_top_k,
-                final_evidence_k=request.final_evidence_k,
-                memory_mode=request.memory_mode,
-                use_interaction_cache=request.use_interaction_cache,
-                cache_mode=request.cache_mode,
-                use_current=request.use_current,
-                use_short_term=request.use_short_term,
-                use_long_term=request.use_long_term,
-                debug_router=request.debug_router,
-                long_term_retrieval_scheme=long_term_retrieval_scheme,
-                stream_handler=_stream_handler,
-            )
-            try:
-                stream_context = load_stream_query_context(
-                    session_id,
-                    sessions_root=ONLINE_SESSIONS_DIR,
-                    project_root=PROJECT_ROOT,
-                    question=request.question,
+            while True:
+                events, offset, pending = read_query_stream_events(
+                    stream_events_path,
+                    offset=offset,
+                    pending=pending,
                 )
-                if stream_context and not result.get("stream_context"):
-                    result["stream_context"] = stream_context
-            except Exception:
-                pass
-            result["status"] = "ok"
-            result["response_mode"] = "stream"
-            _finish_stream_query_task(stream_task, "done", result=result)
-            _append_qa_history_safe(
-                session_id,
-                question=request.question,
-                answer=str(result.get("answer") or result.get("answer_text") or ""),
-                client_source=request.client_source,
-                input_method=request.input_method,
-                status="done",
-                task_id=stream_task["task_id"],
-                response_mode="stream",
-                metadata={"long_term_retrieval_scheme": long_term_retrieval_scheme},
-            )
-            _terminal_done(result, status="ok")
-        except Exception as exc:
-            message = str(exc)
-            _finish_stream_query_task_failure(stream_task, message)
-            _append_qa_history_safe(
-                session_id,
-                question=request.question,
-                client_source=request.client_source,
-                input_method=request.input_method,
-                status="failed",
-                error=message,
-                task_id=stream_task["task_id"],
-                response_mode="stream",
-                metadata={"long_term_retrieval_scheme": long_term_retrieval_scheme},
-            )
-            _put("error", {"type": "error", "status": "error", "message": message, "session_id": session_id})
-            _terminal_done(
-                {
-                    "status": "error",
-                    "response_mode": "stream",
-                    "session_id": session_id,
-                    "question": request.question,
-                    "message": message,
-                    "answer": "",
-                },
-                status="error",
-                message=message,
-            )
+                for data in events:
+                    event = str(data.get("type") or "message")
+                    error_emitted = error_emitted or event == "error"
+                    yield _sse_event(event, data)
+                    last_emit_at = asyncio.get_running_loop().time()
+
+                done_path = dirs["query_done"] / f"{task_id}.json"
+                failed_path = dirs["query_failed"] / f"{task_id}.json"
+                terminal_path = done_path if done_path.exists() else failed_path if failed_path.exists() else None
+                if terminal_path is not None:
+                    terminal_seen = True
+                    payload = read_json(terminal_path, default={})
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+                    error = str(payload.get("error") or result.get("message") or "").strip()
+                    status = "ok" if terminal_path == done_path else "error"
+                    if status == "error" and not error_emitted:
+                        yield _sse_event(
+                            "error",
+                            {"type": "error", "status": "error", "message": error or "query failed", "session_id": session_id},
+                        )
+                    enhanced_result = _augment_evidence_frames_for_response(
+                        {"result": result},
+                        session_id,
+                        api_base_url=api_base_url,
+                    ).get("result", {})
+                    done_payload = {
+                        "type": "done",
+                        "status": status,
+                        "result": normalize_user_visible_text_fields(enhanced_result),
+                    }
+                    if error:
+                        done_payload["message"] = error
+                    yield _sse_event("done", done_payload)
+                    break
+
+                now = asyncio.get_running_loop().time()
+                if now - started_at >= timeout_seconds:
+                    message = f"streaming query timed out after {timeout_seconds:.1f}s"
+                    yield _sse_event("error", {"type": "error", "status": "error", "message": message, "session_id": session_id})
+                    yield _sse_event(
+                        "done",
+                        {
+                            "type": "done",
+                            "status": "error",
+                            "message": message,
+                            "result": {
+                                "status": "error",
+                                "response_mode": "stream",
+                                "session_id": session_id,
+                                "question": request.question,
+                                "message": message,
+                                "answer": "",
+                            },
+                        },
+                    )
+                    break
+                if now - last_emit_at >= ping_seconds:
+                    yield _sse_event(
+                        "ping",
+                        {
+                            "type": "ping",
+                            "session_id": session_id,
+                            "task_id": task_id,
+                            "ts": utc_now_iso(),
+                        },
+                    )
+                    last_emit_at = now
+                await asyncio.sleep(poll_seconds)
         finally:
-            _put("__end__", None)
-
-    threading.Thread(target=_worker, name=f"ask-stream-{session_id}", daemon=True).start()
-
-    async def _events():
-        while True:
-            try:
-                event, data = await asyncio.wait_for(queue.get(), timeout=15.0)
-            except asyncio.TimeoutError:
-                yield _sse_event(
-                    "ping",
-                    {
-                        "type": "ping",
-                        "session_id": session_id,
-                        "ts": utc_now_iso(),
-                    },
-                )
-                continue
-            if event == "__end__":
-                break
-            yield _sse_event(event, data)
+            if terminal_seen and not _env_bool("EM2MEM_QUERY_STREAM_KEEP_EVENTS", False):
+                try:
+                    stream_events_path.unlink()
+                except FileNotFoundError:
+                    pass
 
     return StreamingResponse(
         _events(),
@@ -1211,7 +1154,15 @@ async def query_task_status(task_id: str, http_request: FastAPIRequest = None) -
         payload["message"] = "query task result is missing or expired"
     elif state_key == "query_done" and isinstance(payload.get("result"), dict):
         result = payload["result"]
-        for key in ("answer", "answer_text", "timestamps", "evidence_frames", "latency", "stream_context"):
+        for key in (
+            "answer",
+            "answer_text",
+            "timestamps",
+            "evidence_frames",
+            "latency",
+            "stream_context",
+            *ANSWER_AUDIO_RESPONSE_KEYS,
+        ):
             if key in result and key not in payload:
                 payload[key] = result[key]
         payload.setdefault("result_status", result.get("status"))
@@ -1653,11 +1604,28 @@ async def _prepare_audio_question_transcript(
     transcript_srt = question_dir / f"{question_id}.srt"
     audio_path.write_bytes(payload)
 
-    segments = _run_voice_question_asr(
-        audio_path=audio_path,
-        output_srt=transcript_srt,
-        output_json=transcript_json,
-    )
+    stream_id = str(stream_state.get("stream_id") or stream_state.get("session_id") or session_id)
+    try:
+        segments = await _run_voice_question_asr_via_worker(
+            session_id=session_id,
+            stream_id=stream_id,
+            question_id=question_id,
+            audio_path=audio_path,
+            output_srt=transcript_srt,
+            output_json=transcript_json,
+            duration_ms=duration_ms,
+        )
+    except Exception as exc:
+        print(f"[api] voice question worker ASR failed session={session_id} question_id={question_id}: {exc}", flush=True)
+        return None, JSONResponse(
+            status_code=502,
+            content={
+                "status": "error",
+                "message": f"voice question ASR failed: {exc}",
+                "session_id": session_id,
+                "audio_question_id": question_id,
+            },
+        )
     question = simplify_chinese_text(" ".join(str(item.get("text") or "").strip() for item in segments if str(item.get("text") or "").strip()).strip())
     if not question:
         return None, JSONResponse(status_code=422, content={"status": "no_speech", "message": "no speech recognized", "session_id": session_id})
@@ -2145,6 +2113,12 @@ async def _handle_ask_session(
             pass
         result["status"] = "ok"
         result["response_mode"] = "legacy"
+        result = _attach_answer_audio_for_response(
+            result,
+            session_id,
+            request,
+            task_id=str(sync_task["task_id"]),
+        )
         _finish_stream_query_task(sync_task, "done", result=result)
         result = _augment_evidence_frames_for_response(result, session_id, api_base_url=_api_base_url(http_request))
         _append_qa_history_safe(
@@ -2927,128 +2901,89 @@ async def _start_rokid_stream_session(request: StreamStartRequest) -> JSONRespon
                 "supported_input_modes": sorted(ROKID_INPUT_MODES),
             },
         )
-    if not _rokid_day_session_enabled():
-        return await _start_plain_rokid_stream_session(request, input_mode)
 
     from online_pipeline.rokid_day import (
-        enrich_start_response_for_day,
-        cleanup_failed_child_reservation,
-        mark_rokid_day_failed,
-        mark_rokid_day_started,
+        enrich_start_response_for_single_session_day,
         normalize_run_id,
-        reserve_rokid_day_child,
-        update_child_metadata,
+        reserve_single_session_day_run,
+        single_session_metadata_patch,
+        update_single_session_metadata,
         valid_session_id,
     )
 
     metadata = dict(request.metadata or {})
-    parent_session_id = (
-        str(request.parent_session_id or "").strip()
-        or str(metadata.get("parent_session_id") or "").strip()
-        or str(request.session_id or "").strip()
-    )
-    create_parent = bool(request.create_parent_session)
-    if create_parent or not parent_session_id:
-        parent = create_online_session(
-            source="rokid_parent",
+    for key in ("parent_session_id", "child_session_id", "is_rokid_day_child", "day_context"):
+        metadata.pop(key, None)
+    metadata["rokid_session_mode"] = "single_session"
+
+    session_id = str(request.session_id or "").strip()
+    if session_id:
+        if not valid_session_id(session_id):
+            return JSONResponse(status_code=400, content={"status": "error", "message": "invalid session_id"})
+        session_dir = ONLINE_SESSIONS_DIR / session_id
+        if not session_dir.exists():
+            return JSONResponse(status_code=404, content={"status": "error", "message": f"session not found: {session_id}"})
+    else:
+        created = create_online_session(
+            source="rokid_stream",
             original_filename=None,
             metadata={
+                **metadata,
                 "source": "rokid_glass",
                 "device_type": "rokid",
-                "is_rokid_parent": True,
+                "rokid_session_mode": "single_session",
                 "created_by": "rokid_stream_start",
             },
         )
-        parent_session_id = str(parent["session_id"])
-    if not valid_session_id(parent_session_id):
-        return JSONResponse(status_code=400, content={"status": "error", "message": "invalid parent_session_id"})
-    parent_dir = ONLINE_SESSIONS_DIR / parent_session_id
-    if not parent_dir.exists():
-        return JSONResponse(status_code=404, content={"status": "error", "message": f"parent session not found: {parent_session_id}"})
+        session_id = str(created["session_id"])
+        session_dir = Path(created["session_dir"])
 
-    run_id = normalize_run_id(request.run_id or metadata.get("run_id"))
-    if not run_id:
-        return JSONResponse(status_code=400, content={"status": "error", "message": "run_id is required for Rokid DAY start"})
+    run_id = normalize_run_id(request.run_id or metadata.get("run_id") or uuid4().hex)
+    metadata["run_id"] = run_id
 
     try:
-        run, _ = reserve_rokid_day_child(
-            sessions_root=ONLINE_SESSIONS_DIR,
-            parent_session_id=parent_session_id,
+        run, _ = reserve_single_session_day_run(
+            session_dir=session_dir,
+            session_id=session_id,
             run_id=run_id,
             input_mode=input_mode,
             metadata=metadata,
         )
+        metadata.update(single_session_metadata_patch(run))
+        metadata["input_mode"] = input_mode
+        update_single_session_metadata(session_dir, run)
     except Exception as exc:
         return JSONResponse(status_code=500, content={"status": "error", "message": str(exc)})
 
-    if str(run.get("status") or "") == "started" and isinstance(run.get("start_response"), dict):
-        return JSONResponse(status_code=200, content=enrich_start_response_for_day(run["start_response"], run))
-
-    child_session_id = str(run.get("child_session_id") or "")
-    child_metadata = {
-        **metadata,
-        "input_mode": input_mode,
-        "parent_session_id": parent_session_id,
-        "child_session_id": child_session_id,
-        "is_rokid_day_child": True,
-        "day_label": run.get("day_label"),
-        "day_index": run.get("day_index"),
-        "run_id": run_id,
-    }
-    if not (ONLINE_SESSIONS_DIR / child_session_id).exists():
-        create_online_session(
-            source="rokid_day_child",
-            original_filename=None,
-            metadata=child_metadata,
-            session_id=child_session_id,
-        )
-    child_request = StreamStartRequest(
-        session_id=child_session_id,
-        parent_session_id=parent_session_id,
+    stream_request = StreamStartRequest(
+        session_id=session_id,
+        parent_session_id=None,
         run_id=run_id,
+        create_parent_session=False,
         input_mode=input_mode,
         chunk_duration=request.chunk_duration,
-        metadata=child_metadata,
+        metadata=metadata,
         owner_id=request.owner_id,
         device_id=request.device_id,
         device_type=request.device_type,
     )
     response = await _start_stream_session(
-        child_request,
+        stream_request,
         route_kind="rokid",
         forced_input_mode=input_mode,
         allow_rokid=True,
-        query_warmup_session_id=parent_session_id,
-        query_warmup_reason="rokid_parent_start",
+        query_warmup_session_id=session_id,
+        query_warmup_reason="rokid_single_session_start",
         query_warmup_wait_for_memory=False,
     )
     content = _json_response_content(response)
     if response.status_code < 200 or response.status_code >= 300:
-        mark_rokid_day_failed(
-            sessions_root=ONLINE_SESSIONS_DIR,
-            parent_session_id=parent_session_id,
-            run_id=run_id,
-            error=str(content.get("message") or response.status_code),
-        )
-        cleanup_failed_child_reservation(ONLINE_SESSIONS_DIR, child_session_id)
-        content = enrich_start_response_for_day(
-            {
-                **content,
-                "status": content.get("status") or "error",
-                "message": content.get("message") or "Rokid stream start failed",
-            },
-            run,
-        )
-        return JSONResponse(status_code=response.status_code, content=content)
-    content = enrich_start_response_for_day(content, run)
-    update_child_metadata(ONLINE_SESSIONS_DIR / child_session_id, run)
-    started_run = mark_rokid_day_started(
-        sessions_root=ONLINE_SESSIONS_DIR,
-        parent_session_id=parent_session_id,
-        run_id=run_id,
-        response=content,
-    )
-    content = enrich_start_response_for_day(content, started_run)
+        content = {
+            **content,
+            "status": content.get("status") or "error",
+            "message": content.get("message") or "Rokid stream start failed",
+        }
+    content = enrich_start_response_for_single_session_day(content, run)
     return JSONResponse(status_code=response.status_code, content=content)
 
 
@@ -3796,36 +3731,8 @@ def _execute_stream_end(
         )
         active_session_cleared = None
         active_rokid_session_cleared = None
-        rokid_day_merge_task = None
-        rokid_day_merge_error = None
         if _is_rokid_stream_state(state):
             active_rokid_session_cleared = _clear_active_rokid_session(session_id, reason="stream_end")
-            try:
-                from online_pipeline.rokid_day import load_rokid_day_child_metadata
-                from online_preprocess.task_queue import enqueue_rokid_day_merge_task
-
-                day_meta = load_rokid_day_child_metadata(session_dir)
-                if day_meta:
-                    merge_path = enqueue_rokid_day_merge_task(
-                        PROJECT_ROOT,
-                        parent_session_id=str(day_meta["parent_session_id"]),
-                        child_session_id=session_id,
-                        day_label=str(day_meta["day_label"]),
-                        day_index=int(day_meta["day_index"]),
-                        run_id=str(day_meta.get("run_id") or ""),
-                        reason="stream_end",
-                    )
-                    rokid_day_merge_task = {
-                        "task_id": merge_path.stem,
-                        "task_path": str(merge_path),
-                        "parent_session_id": day_meta["parent_session_id"],
-                        "child_session_id": session_id,
-                        "day_label": day_meta["day_label"],
-                        "day_index": day_meta["day_index"],
-                        "run_id": day_meta.get("run_id"),
-                    }
-            except Exception as exc:
-                rokid_day_merge_error = str(exc)
         if _env_bool("EM2MEM_SINGLE_ACTIVE_SESSION", True):
             from online_pipeline.active_session import clear_active_session
 
@@ -3849,8 +3756,8 @@ def _execute_stream_end(
             "can_ask": True,
             "active_session_cleared": active_session_cleared,
             "active_rokid_session_cleared": active_rokid_session_cleared,
-            "rokid_day_merge_task": rokid_day_merge_task,
-            "rokid_day_merge_error": rokid_day_merge_error,
+            "rokid_day_merge_task": None,
+            "rokid_day_merge_error": None,
         }
     except Exception as exc:
         return 500, {"status": "error", "message": str(exc)}

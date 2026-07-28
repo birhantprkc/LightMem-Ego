@@ -788,7 +788,7 @@ def build_session_pipeline_state(session_dir: Path) -> dict[str, Any]:
         },
         "stream_asr": {
             "enabled": _as_bool(os.getenv("EM2MEM_STREAM_ASR_ENABLED"), True),
-            "backend": os.getenv("EM2MEM_STREAM_ASR_BACKEND", "whisperx"),
+            "backend": os.getenv("EM2MEM_STREAM_ASR_BACKEND", "xfyun"),
             "queue_pending": queue_counts(session_dir.parents[1]).get("stream_asr_queued", 0) if len(session_dir.parents) > 1 else 0,
             "partial_transcript_version": _as_int(partial_transcript_state.get("partial_transcript_version"), 0),
             "partial_transcript_segment_count": _as_int(partial_transcript_state.get("segment_count"), _count_lines(session_dir / "stream" / "transcript" / "partial_transcript.jsonl")),

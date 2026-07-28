@@ -20,6 +20,7 @@ from online_preprocess.io_utils import read_json
 from online_pipeline.runtime_state import write_worker_runtime
 from online_query.query_cache import SessionEngineCache
 from online_query.query_engine import load_query_engine, query_session
+from online_query.stream_transport import QueryStreamEventWriter, query_stream_events_path
 from online_qa_history import append_qa_history
 from online_visual.vlm2vec_runtime import get_global_vlm2vec_runtime
 from online_retrieval_scheme import normalize_long_term_retrieval_scheme
@@ -298,6 +299,42 @@ def _classify_upstream_error(error: BaseException | str) -> tuple[str | None, st
     return None, message
 
 
+def _attach_answer_audio_for_task(
+    *,
+    result: dict[str, Any],
+    sessions_root: Path,
+    session_id: str,
+    client_source: str,
+    input_method: str,
+    task_id: str,
+    answer_tts: bool = False,
+) -> dict[str, Any]:
+    if not answer_tts:
+        return result
+    try:
+        from online_preprocess.tts_xfyun import attach_answer_audio_to_result
+
+        return attach_answer_audio_to_result(
+            result=result,
+            sessions_root=sessions_root,
+            session_id=session_id,
+            client_source=client_source,
+            input_method=input_method,
+            task_id=task_id,
+        )
+    except Exception as exc:
+        result.setdefault(
+            "answer_tts",
+            {
+                "status": "failed",
+                "backend": "xfyun_tts",
+                "error": str(exc),
+                "created_at": utc_now_iso(),
+            },
+        )
+        return result
+
+
 def _discover_memory_ready_sessions(sessions_root: Path, limit: int) -> list[str]:
     if limit <= 0 or not sessions_root.exists():
         return []
@@ -453,6 +490,23 @@ def _process_task(
     priority_reason = task.get("query_priority_reason")
     client_source = str(task.get("client_source") or "unknown")
     input_method = str(task.get("input_method") or "unknown")
+    answer_tts = _coerce_bool(task.get("answer_tts", False), False)
+    response_mode = str(task.get("response_mode") or "async").strip().lower()
+    is_streaming = response_mode in {"stream", "streaming", "progressive"}
+    stream_writer = None
+    if is_streaming:
+        configured_stream_path = str(task.get("stream_events_path") or "").strip()
+        if configured_stream_path:
+            candidate = (project_root / configured_stream_path).resolve()
+            stream_root = (project_root / "online_tasks" / "query_stream_events").resolve()
+            try:
+                candidate.relative_to(stream_root)
+                stream_path = candidate
+            except ValueError:
+                stream_path = query_stream_events_path(project_root, task_id)
+        else:
+            stream_path = query_stream_events_path(project_root, task_id)
+        stream_writer = QueryStreamEventWriter(stream_path)
 
     if not session_id or not question:
         finish_query_task(
@@ -493,6 +547,7 @@ def _process_task(
                 debug_router=debug_router,
                 cache_mode=cache_mode,
                 long_term_retrieval_scheme=long_term_retrieval_scheme,
+                stream_handler=stream_writer,
             )
         try:
             from online_query.stream_query_context import load_stream_query_context
@@ -514,6 +569,17 @@ def _process_task(
                 result["message"] = readable
         if error_type:
             task["error_type"] = error_type
+        if final_status == "done":
+            result["response_mode"] = "stream" if is_streaming else "async"
+            result = _attach_answer_audio_for_task(
+                result=result,
+                sessions_root=sessions_root,
+                session_id=session_id,
+                client_source=client_source,
+                input_method=input_method,
+                task_id=task_id,
+                answer_tts=answer_tts,
+            )
         try:
             append_qa_history(
                 sessions_root / session_id,
@@ -525,7 +591,7 @@ def _process_task(
                 status=final_status,
                 error=error_message or "",
                 task_id=task_id,
-                response_mode="async",
+                response_mode="stream" if is_streaming else "async",
                 metadata={"long_term_retrieval_scheme": long_term_retrieval_scheme},
             )
         except Exception as history_exc:
@@ -548,6 +614,15 @@ def _process_task(
         )
     except Exception as exc:
         error_type, readable = _classify_upstream_error(exc)
+        if stream_writer is not None:
+            stream_writer(
+                {
+                    "type": "error",
+                    "status": "error",
+                    "message": readable,
+                    "session_id": session_id,
+                }
+            )
         if error_type:
             task["error_type"] = error_type
         try:
@@ -560,7 +635,7 @@ def _process_task(
                 status="failed",
                 error=readable,
                 task_id=task_id,
-                response_mode="async",
+                response_mode="stream" if is_streaming else "async",
                 metadata={"long_term_retrieval_scheme": long_term_retrieval_scheme},
             )
         except Exception as history_exc:

@@ -1201,6 +1201,7 @@ from dataclasses import dataclass, field
 from PIL import Image
 
 from ...embedding import EmbeddingModel
+from ..timestamp_utils import memory_timestamp_range
 
 logger = logging.getLogger(__name__)
 
@@ -1222,10 +1223,7 @@ class VideoClipEntry:
 
     @property
     def timestamp_int(self) -> Tuple[int, int]:
-        day = self.date.replace('DAY', '').replace('Day', '')
-        start_ts = int(day + self.start_time.zfill(8))
-        end_ts = int(day + self.end_time.zfill(8))
-        return start_ts, end_ts
+        return memory_timestamp_range(self.date, self.start_time, self.end_time)
 
     def to_display_str(self) -> str:
         start_ts, end_ts = self.timestamp_int

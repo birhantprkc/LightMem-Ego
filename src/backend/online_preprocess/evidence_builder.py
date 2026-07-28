@@ -6,6 +6,7 @@ from typing import Any
 from .evidence_schema import build_fallback_payload, normalize_caption_payload
 from .io_utils import ensure_dir, read_json, relative_to_session, utc_now_iso, write_json, write_status
 from .vlm_captioner import VLMCaptioner, build_vlm_captioner
+from online_pipeline.rokid_day import apply_demo_day_fields
 
 
 def _append_log(log_path: Path, message: str) -> None:
@@ -191,8 +192,21 @@ def build_session_evidence(
             _append_log(log_path, f"segment fallback: {segment.get('segment_id')} error={exc}")
 
         evidence_doc = _build_evidence_doc(session_id=session_id, segment=segment, payload=payload)
+        apply_demo_day_fields(
+            evidence_doc,
+            session_dir=session_dir,
+            start_seconds=evidence_doc.get("start_time"),
+            end_seconds=evidence_doc.get("end_time"),
+        )
         evidence_docs.append(evidence_doc)
-        captioned_entries.append(_build_captioned_entry(segment, evidence_doc))
+        captioned_entry = _build_captioned_entry(segment, evidence_doc)
+        apply_demo_day_fields(
+            captioned_entry,
+            session_dir=session_dir,
+            start_seconds=captioned_entry.get("start_time"),
+            end_seconds=captioned_entry.get("end_time"),
+        )
+        captioned_entries.append(captioned_entry)
 
     write_json(evidence_path, evidence_docs)
     write_json(captioned_path, captioned_entries)
