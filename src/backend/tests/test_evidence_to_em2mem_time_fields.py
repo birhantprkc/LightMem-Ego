@@ -36,16 +36,19 @@ def _load_evidence_to_em2mem(monkeypatch):
     return module
 
 
-def test_caption_item_preserves_parent_display_time_and_local_seconds(monkeypatch) -> None:
+def test_caption_item_preserves_day_display_time_and_local_seconds(monkeypatch) -> None:
     evidence_to_em2mem = _load_evidence_to_em2mem(monkeypatch)
 
     item = evidence_to_em2mem.evidence_doc_to_caption_item(
-        "parent1",
+        "session1",
         {
-            "doc_id": "parent1__DAY1__ev1",
+            "doc_id": "session1_DAY1_ev1",
             "segment_id": "seg_000000_000030",
             "date": "DAY1",
             "day_label": "DAY1",
+            "weekday_label": "周一",
+            "display_day_label": "DAY1 周一",
+            "relative_day_start_ms": 0,
             "start_time": "20453000",
             "end_time": "20460000",
             "local_start_time": 0.0,
@@ -72,13 +75,15 @@ def test_caption_item_preserves_parent_display_time_and_local_seconds(monkeypatc
     assert item["display_time_range"] == "20:45:30-20:46:00"
     assert item["display_datetime_start"] == "2026-07-08 20:45:30"
     assert item["timezone"] == "Asia/Shanghai"
+    assert item["weekday_label"] == "周一"
+    assert item["display_day_label"] == "DAY1 周一"
 
 
 def test_caption_item_still_converts_relative_seconds(monkeypatch) -> None:
     evidence_to_em2mem = _load_evidence_to_em2mem(monkeypatch)
 
     item = evidence_to_em2mem.evidence_doc_to_caption_item(
-        "child1",
+        "session1",
         {
             "doc_id": "ev1",
             "start_time": 60.0,

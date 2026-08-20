@@ -14,6 +14,8 @@ if [ -f ".env" ]; then
   source ".env"
   set +a
 fi
+# shellcheck disable=SC1091
+source "$PROJECT_ROOT/scripts/llm_profile.sh"
 
 # Query warmup and all queued/streaming queries share this worker's engine
 # cache. Keep text embeddings in the dedicated service to avoid loading the

@@ -314,9 +314,6 @@ def evidence_doc_to_caption_item(session_id: str, doc: dict[str, Any], idx: int)
         "status": doc.get("status", "final"),
     }
     for key in (
-        "parent_session_id",
-        "child_session_id",
-        "source_child_session_id",
         "day_label",
         "weekday_label",
         "weekday_label_en",
@@ -396,9 +393,6 @@ def _aggregate_caption_group(group: list[dict[str, Any]], scale: str, idx: int) 
         "level": scale,
     }
     passthrough_first_keys = (
-        "parent_session_id",
-        "child_session_id",
-        "source_child_session_id",
         "day_label",
         "weekday_label",
         "weekday_label_en",

@@ -15,6 +15,8 @@ if [[ -f ".env" ]]; then
   source ".env"
   set +a
 fi
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/llm_profile.sh"
 
 export EM2MEM_CLEAN_CUDA_ENV="${EM2MEM_CLEAN_CUDA_ENV:-1}"
 if [[ "${EM2MEM_CLEAN_CUDA_ENV}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then

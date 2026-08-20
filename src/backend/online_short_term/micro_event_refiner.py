@@ -10,6 +10,7 @@ from typing import Any
 
 from online_preprocess.io_utils import read_json, utc_now_iso
 from online_short_term.schemas import build_retrieval_text
+from online_llm_config import local_llm_enabled, merge_local_chat_request_kwargs
 
 
 SYSTEM_PROMPT = """You refine a provisional short-term micro-event for first-person video memory.
@@ -179,6 +180,8 @@ def _normalize_reasoning_effort(value: Any) -> str:
 
 
 def _reasoning_effort_kwargs() -> dict[str, Any]:
+    if local_llm_enabled():
+        return {}
     if os.getenv("EM2MEM_OPENAI_DISABLE_REASONING", "1").strip().lower() in {"1", "true", "yes", "on"}:
         return {"reasoning_effort": "none"}
     effort = os.getenv("EM2MEM_CHAT_REASONING_EFFORT") or os.getenv("EM2MEM_OPENAI_REASONING_EFFORT") or "none"
@@ -349,7 +352,9 @@ class MicroEventRefiner:
             image_path = session_dir / str(frame.get("path", ""))
             if image_path.exists():
                 content.append({"type": "image_url", "image_url": {"url": _image_data_url(image_path)}})
-        request_kwargs = _reasoning_effort_kwargs()
+        request_kwargs = merge_local_chat_request_kwargs(_reasoning_effort_kwargs())
+        if local_llm_enabled():
+            request_kwargs["response_format"] = {"type": "json_object"}
         try:
             response = self._client.chat.completions.create(
                 model=self.model,

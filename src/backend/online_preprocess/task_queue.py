@@ -231,10 +231,6 @@ LIVE_INGEST_QUEUE_NAME = "live_ingest"
 LIVE_INGEST_IN_PROGRESS_QUEUE_NAME = "live_ingest_in_progress"
 LIVE_INGEST_DONE_QUEUE_NAME = "live_ingest_done"
 LIVE_INGEST_FAILED_QUEUE_NAME = "live_ingest_failed"
-ROKID_DAY_MERGE_QUEUE_NAME = "rokid_day_merge"
-ROKID_DAY_MERGE_IN_PROGRESS_QUEUE_NAME = "rokid_day_merge_in_progress"
-ROKID_DAY_MERGE_DONE_QUEUE_NAME = "rokid_day_merge_done"
-ROKID_DAY_MERGE_FAILED_QUEUE_NAME = "rokid_day_merge_failed"
 
 
 def get_queue_dirs(project_root: Path) -> dict[str, Path]:
@@ -280,10 +276,6 @@ def get_queue_dirs(project_root: Path) -> dict[str, Path]:
         "live_ingest_in_progress": root / LIVE_INGEST_IN_PROGRESS_QUEUE_NAME,
         "live_ingest_done": root / LIVE_INGEST_DONE_QUEUE_NAME,
         "live_ingest_failed": root / LIVE_INGEST_FAILED_QUEUE_NAME,
-        "rokid_day_merge_queued": root / ROKID_DAY_MERGE_QUEUE_NAME,
-        "rokid_day_merge_in_progress": root / ROKID_DAY_MERGE_IN_PROGRESS_QUEUE_NAME,
-        "rokid_day_merge_done": root / ROKID_DAY_MERGE_DONE_QUEUE_NAME,
-        "rokid_day_merge_failed": root / ROKID_DAY_MERGE_FAILED_QUEUE_NAME,
     }
 
 
@@ -1197,60 +1189,6 @@ def enqueue_live_ingest_task(
     return task_path
 
 
-def enqueue_rokid_day_merge_task(
-    project_root: Path,
-    *,
-    parent_session_id: str,
-    child_session_id: str,
-    day_label: str,
-    day_index: int,
-    run_id: str,
-    reason: str = "stream_end",
-    retry_count: int = 0,
-    force: bool = False,
-) -> Path:
-    dirs = ensure_queue_dirs(project_root)
-    dedupe_key = f"{parent_session_id}:{child_session_id}:{run_id}"
-    if not force:
-        existing = _find_existing_task(
-            project_root,
-            keys=("rokid_day_merge_queued", "rokid_day_merge_in_progress", "rokid_day_merge_done"),
-            session_id=child_session_id,
-            task_type="rokid_day_merge",
-            match_fields={"dedupe_key": dedupe_key},
-        )
-        if existing is not None:
-            return existing
-    task_id = f"{child_session_id}_{uuid4().hex[:8]}"
-    task_path = dirs["rokid_day_merge_queued"] / f"{task_id}.json"
-    now = utc_now_iso()
-    write_json_atomic(
-        task_path,
-        {
-            "task_id": task_id,
-            "task_type": "rokid_day_merge",
-            "session_id": child_session_id,
-            "parent_session_id": parent_session_id,
-            "child_session_id": child_session_id,
-            "day_label": day_label,
-            "day_index": int(day_index),
-            "run_id": run_id,
-            "reason": reason,
-            "dedupe_key": dedupe_key,
-            "retry_count": int(retry_count or 0),
-            "status": "queued",
-            "created_at": now,
-            "updated_at": now,
-        },
-    )
-    return task_path
-
-
-def list_queued_rokid_day_merge_tasks(project_root: Path) -> list[Path]:
-    dirs = ensure_queue_dirs(project_root)
-    return sorted(dirs["rokid_day_merge_queued"].glob("*.json"), key=lambda p: p.stat().st_mtime)
-
-
 def list_queued_live_ingest_tasks(project_root: Path) -> list[Path]:
     dirs = ensure_queue_dirs(project_root)
     return sorted(dirs["live_ingest_queued"].glob("*.json"), key=lambda p: p.stat().st_mtime)
@@ -1265,11 +1203,10 @@ def _claim_task_to(project_root: Path, task_path: Path, in_progress_key: str) ->
         return None
     if not isinstance(task, dict):
         return None
-    if str(task.get("task_type") or "") != "rokid_day_merge":
-        abort_task_file, task_belongs_to_inactive_session = _active_session_helpers()
-        if task_belongs_to_inactive_session(project_root, task):
-            abort_task_file(project_root, task_path, task=task, reason="inactive_session_claim")
-            return None
+    abort_task_file, task_belongs_to_inactive_session = _active_session_helpers()
+    if task_belongs_to_inactive_session(project_root, task):
+        abort_task_file(project_root, task_path, task=task, reason="inactive_session_claim")
+        return None
     claimed_at = utc_now_iso()
     task["status"] = "in_progress"
     task["claimed_at"] = claimed_at
@@ -1333,34 +1270,6 @@ def claim_live_ingest_task(project_root: Path, task_path: Path) -> tuple[Path, d
     return _claim_task_to(project_root, task_path, "live_ingest_in_progress")
 
 
-def claim_rokid_day_merge_task(project_root: Path, task_path: Path) -> tuple[Path, dict] | None:
-    return _claim_task_to(project_root, task_path, "rokid_day_merge_in_progress")
-
-
-def requeue_rokid_day_merge_task(
-    project_root: Path,
-    claimed_path: Path,
-    task: dict,
-    *,
-    retry_count: int,
-    not_before: str | None = None,
-    reason: str = "waiting_for_child_outputs",
-    result: dict | None = None,
-) -> Path:
-    dirs = ensure_queue_dirs(project_root)
-    task["status"] = "queued"
-    task["retry_count"] = int(retry_count)
-    task["requeue_reason"] = reason
-    task["not_before"] = not_before
-    task["updated_at"] = utc_now_iso()
-    if result is not None:
-        task["last_waiting_result"] = result
-    target_path = dirs["rokid_day_merge_queued"] / claimed_path.name
-    write_json_atomic(claimed_path, task)
-    claimed_path.replace(target_path)
-    return target_path
-
-
 def _finish_task_to(
     project_root: Path,
     claimed_path: Path,
@@ -1374,11 +1283,10 @@ def _finish_task_to(
     dirs = ensure_queue_dirs(project_root)
     if status not in {"done", "failed"}:
         raise ValueError(f"Unsupported task final status: {status}")
-    if str(task.get("task_type") or "") != "rokid_day_merge":
-        abort_task_file, task_belongs_to_inactive_session = _active_session_helpers()
-        if task_belongs_to_inactive_session(project_root, task):
-            abort_task_file(project_root, claimed_path, task=task, reason="inactive_session_finish")
-            return claimed_path
+    abort_task_file, task_belongs_to_inactive_session = _active_session_helpers()
+    if task_belongs_to_inactive_session(project_root, task):
+        abort_task_file(project_root, claimed_path, task=task, reason="inactive_session_finish")
+        return claimed_path
     task["status"] = status
     task["error"] = error
     if result is not None:
@@ -1443,7 +1351,3 @@ def finish_stream_asr_task(project_root: Path, claimed_path: Path, task: dict, s
 
 def finish_live_ingest_task(project_root: Path, claimed_path: Path, task: dict, status: str, result: dict | None = None, error: str | None = None) -> Path:
     return _finish_task_to(project_root, claimed_path, task, status, "live_ingest_done", "live_ingest_failed", result=result, error=error)
-
-
-def finish_rokid_day_merge_task(project_root: Path, claimed_path: Path, task: dict, status: str, result: dict | None = None, error: str | None = None) -> Path:
-    return _finish_task_to(project_root, claimed_path, task, status, "rokid_day_merge_done", "rokid_day_merge_failed", result=result, error=error)

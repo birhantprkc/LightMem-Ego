@@ -83,10 +83,7 @@ def load_stream_query_context(
         query_context = resolve_query_session_context(session_id, sessions_root)
     except Exception:
         query_context = {
-            "is_rokid_day_child": False,
-            "is_rokid_demo_day": False,
             "long_term_session_id": session_id,
-            "parent_session_id": session_id,
         }
     long_term_selection = resolve_query_long_term_candidates(
         session_id,
@@ -103,11 +100,7 @@ def load_stream_query_context(
             "is_stream_session": False,
             "recommended_answer_policy": "full_summary",
             "long_term_session_id": long_term_session_id,
-            "parent_session_id": query_context.get("parent_session_id"),
-            "is_rokid_day_child": bool(query_context.get("is_rokid_day_child")),
-            "is_rokid_demo_day": bool(query_context.get("is_rokid_demo_day")),
             "day_context": query_context.get("day_context"),
-            "display_day_label": query_context.get("display_day_label"),
             "long_term_selection": long_term_selection,
         }
     pipeline_state = read_json(session_dir / "pipeline_state.json", default={})
@@ -179,14 +172,7 @@ def load_stream_query_context(
         "is_stream_session": True,
         "session_id": session_id,
         "long_term_session_id": long_term_session_id,
-        "parent_session_id": query_context.get("parent_session_id"),
-        "is_rokid_day_child": bool(query_context.get("is_rokid_day_child")),
-        "is_rokid_demo_day": bool(query_context.get("is_rokid_demo_day")),
         "day_context": query_context.get("day_context"),
-        "day_label": query_context.get("day_label"),
-        "day_index": query_context.get("day_index"),
-        "weekday_label": query_context.get("weekday_label"),
-        "display_day_label": query_context.get("display_day_label"),
         "long_term_selection": long_term_selection,
         "stream_status": stream_state.get("status", "not_started"),
         "latest_uploaded_chunk_index": latest_uploaded,

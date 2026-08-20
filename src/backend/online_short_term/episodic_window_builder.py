@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from online_preprocess.io_utils import utc_now_iso
+from online_llm_config import local_llm_enabled, merge_local_chat_request_kwargs
 
 
 SYSTEM_PROMPT = """You are building a 30-second episodic memory unit for a long-video memory system.
@@ -80,6 +81,8 @@ def _normalize_reasoning_effort(value: Any) -> str:
 
 
 def _reasoning_effort_kwargs() -> dict[str, Any]:
+    if local_llm_enabled():
+        return {}
     if os.getenv("EM2MEM_OPENAI_DISABLE_REASONING", "1").strip().lower() in {"1", "true", "yes", "on"}:
         return {"reasoning_effort": "none"}
     effort = os.getenv("EM2MEM_CHAT_REASONING_EFFORT") or os.getenv("EM2MEM_OPENAI_REASONING_EFFORT") or "none"
@@ -388,7 +391,9 @@ class MSTEpisodicWindowBuilder:
         last_exc = None
         for _ in range(max(1, self.retries)):
             try:
-                request_kwargs = _reasoning_effort_kwargs()
+                request_kwargs = merge_local_chat_request_kwargs(_reasoning_effort_kwargs())
+                if local_llm_enabled():
+                    request_kwargs["response_format"] = {"type": "json_object"}
                 try:
                     response = self._client.chat.completions.create(
                         model=self.model,

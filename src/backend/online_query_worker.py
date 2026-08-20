@@ -472,7 +472,7 @@ def _process_task(
     retrieval_mode = str(task.get("retrieval_mode") or "auto")
     use_image_evidence = task.get("use_image_evidence", "auto")
     max_image_frames = int(task.get("max_image_frames") or 4)
-    max_image_evidence = int(task.get("max_image_evidence") or 3)
+    max_image_evidence = int(task.get("max_image_evidence") or 1)
     text_top_k = task.get("text_top_k")
     visual_top_k = task.get("visual_top_k")
     final_evidence_k = task.get("final_evidence_k")

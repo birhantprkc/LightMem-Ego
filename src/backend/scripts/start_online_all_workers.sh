@@ -21,6 +21,8 @@ if [[ -f ".env" ]]; then
   source ".env"
   set +a
 fi
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/llm_profile.sh"
 if [[ -n "$REQUESTED_PIPELINE_MODE" ]]; then
   EM2MEM_PIPELINE_MODE="$REQUESTED_PIPELINE_MODE"
 fi
@@ -139,11 +141,55 @@ raise SystemExit(1)
 PY
 }
 
+local_qwen35_ready() {
+  local url="${EM2MEM_LOCAL_LLM_BASE_URL:-http://${EM2MEM_LOCAL_LLM_HOST:-127.0.0.1}:${EM2MEM_LOCAL_LLM_PORT:-18100}/v1}"
+  "$PYTHON_BIN" - "$url" <<'PY'
+import json
+import sys
+import urllib.request
+
+url = sys.argv[1].rstrip("/") + "/models"
+try:
+    with urllib.request.urlopen(url, timeout=3) as response:
+        data = json.loads(response.read().decode("utf-8"))
+except Exception:
+    raise SystemExit(1)
+models = data.get("data")
+raise SystemExit(0 if isinstance(models, list) and models else 1)
+PY
+}
+
+wait_for_local_qwen35() {
+  local timeout="${EM2MEM_LOCAL_LLM_READY_TIMEOUT_SECONDS:-900}"
+  local started_at=$SECONDS
+  while (( SECONDS - started_at < timeout )); do
+    if local_qwen35_ready; then
+      echo "[start_online_all_workers] local Qwen3.5 API is ready"
+      return 0
+    fi
+    sleep 5
+  done
+  echo "[start_online_all_workers] local Qwen3.5 API did not become ready within ${timeout}s" >&2
+  return 1
+}
+
 echo "[start_online_all_workers] Pipeline mode: ${PIPELINE_MODE}"
+echo "[start_online_all_workers] LLM profile: ${EM2MEM_LLM_PROFILE}"
 if [[ "$PIPELINE_MODE" == "legacy" ]]; then
   echo "[start_online_all_workers] Main path: preprocess -> legacy evidence -> memory -> visual -> query"
 else
   echo "[start_online_all_workers] Main path: stream/live_ingest/preprocess -> M_cur/M_st -> MST refine -> MST consolidation -> memory -> visual -> query"
+fi
+
+if [[ "${EM2MEM_LLM_PROFILE}" == "local-qwen35" ]]; then
+  if local_qwen35_ready; then
+    echo "[start_online_all_workers] local Qwen3.5 API already healthy at ${EM2MEM_LOCAL_LLM_BASE_URL}"
+  else
+    start_worker local_qwen35 bash scripts/start_local_qwen35_server.sh
+    if [[ "$DRY_RUN" != "1" ]]; then
+      wait_for_local_qwen35
+    fi
+  fi
 fi
 
 start_worker preprocess env EM2MEM_PREPROCESS_CONSUME_STREAM_ASR="${EM2MEM_PREPROCESS_CONSUME_STREAM_ASR:-0}" bash scripts/start_online_worker.sh
@@ -206,7 +252,6 @@ else
   echo "[start_online_all_workers] Visual embedding worker: disabled by EM2MEM_AUTO_VISUAL_EMBEDDING=0"
 fi
 start_worker memory bash scripts/start_online_memory_worker.sh
-start_worker rokid_day_merge bash scripts/start_online_rokid_day_merge_worker.sh
-CUDA_VISIBLE_DEVICES=3 start_worker query bash scripts/start_online_query_worker.sh
+CUDA_VISIBLE_DEVICES=0 start_worker query bash scripts/start_online_query_worker.sh
 
 echo "[start_online_all_workers] started. Monitor with: python monitor_online_pipeline.py --watch"

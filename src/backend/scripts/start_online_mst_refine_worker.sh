@@ -15,6 +15,8 @@ if [[ -f ".env" ]]; then
   source ".env"
   set +a
 fi
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/llm_profile.sh"
 
 export EM2MEM_MST_REFINE_BACKEND="${EM2MEM_MST_REFINE_BACKEND:-openai}"
 export EM2MEM_REFINE_MAX_CONCURRENCY="${EM2MEM_REFINE_MAX_CONCURRENCY:-4}"

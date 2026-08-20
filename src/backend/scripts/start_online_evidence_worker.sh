@@ -15,5 +15,7 @@ if [[ -f ".env" ]]; then
   source ".env"
   set +a
 fi
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/llm_profile.sh"
 
 exec python online_evidence_worker.py "$@"

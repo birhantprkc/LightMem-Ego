@@ -56,6 +56,7 @@ class Qwen3EmbeddingModel:
 
         self.model = SentenceTransformer(
             model_name,
+            device=self.device,
             model_kwargs=model_kwargs,
             tokenizer_kwargs={"padding_side": "left"},
             local_files_only=local_files_only,

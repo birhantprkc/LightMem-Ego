@@ -4,9 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-if [[ -f ".venv_whisperx/bin/activate" ]]; then
+if [[ -f ".venv/bin/activate" ]]; then
   # shellcheck disable=SC1091
-  source ".venv_whisperx/bin/activate"
+  source ".venv/bin/activate"
 fi
 
 if [[ -f ".env" ]]; then
@@ -15,6 +15,8 @@ if [[ -f ".env" ]]; then
   source ".env"
   set +a
 fi
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/llm_profile.sh"
 
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/env_ffmpeg.sh"

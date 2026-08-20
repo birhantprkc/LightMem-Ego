@@ -20,7 +20,6 @@ WORKER_NAMES = (
     "consolidation",
     "visual",
     "memory",
-    "rokid_day_merge",
     "query",
     "live_ingest",
 )
@@ -407,8 +406,6 @@ class WorkerTaskHeartbeat:
         self.task_id = str(self.task.get("task_id") or (self.claimed_path.stem if self.claimed_path else f"{worker}_task"))
         self.session_id = str(
             self.task.get("session_id")
-            or self.task.get("child_session_id")
-            or self.task.get("parent_session_id")
             or ""
         )
         self.task_type = str(self.task.get("task_type") or worker)
@@ -466,8 +463,6 @@ class WorkerTaskHeartbeat:
             "chunk_index",
             "upload_chunk_id",
             "upload_chunk_index",
-            "parent_session_id",
-            "child_session_id",
             "day_label",
             "day_index",
         ):

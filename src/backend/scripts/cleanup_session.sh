@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Delete all data for a given parent session on the backend server.
+# Delete all data for a given session on the backend server.
 # Usage: ./cleanup_session.sh <session_id> [--dry-run] [--force]
 #   --dry-run  List what would be deleted without actually deleting
 #   --force    Skip confirmation prompt
@@ -8,7 +8,7 @@ set -euo pipefail
 
 usage() {
     echo "Usage: $0 <session_id> [--dry-run] [--force]"
-    echo "  session_id  Parent session ID to delete (e.g. 3d376dc97da2)"
+    echo "  session_id  Session ID to delete (e.g. 3d376dc97da2)"
     echo "  --dry-run   List what would be deleted without actually deleting"
     echo "  --force     Skip confirmation prompt"
     exit 1
@@ -51,14 +51,14 @@ PROJECT_ROOT="${PROJECT_ROOT:-/zjunlp/chenyijun/lightmem_ego-online-server-relea
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-    echo "Error: '$PYTHON_BIN' is required to inspect Rokid parent/child session metadata."
+    echo "Error: '$PYTHON_BIN' is required to inspect task metadata."
     echo "Set PYTHON_BIN=/path/to/python if python3 is not on PATH."
     exit 1
 fi
 
 echo "============================================"
 echo "  Session Cleanup"
-echo "  Parent Session ID: $SESSION_ID"
+echo "  Session ID: $SESSION_ID"
 echo "  Server path: $PROJECT_ROOT"
 if [ "$DRY_RUN" = true ]; then
     echo "  Mode: DRY-RUN (list only, no deletion)"
@@ -117,7 +117,7 @@ except Exception:
 if not isinstance(payload, dict):
     sys.exit(1)
 
-for field in ("session_id", "parent_session_id", "child_session_id", "active_session_id"):
+for field in ("session_id", "active_session_id"):
     value = str(payload.get(field) or "").strip()
     if value in session_ids:
         sys.exit(0)
@@ -127,70 +127,18 @@ sys.exit(1)
 }
 
 ONLINE_SESSIONS_DIR="$PROJECT_ROOT/online_sessions"
-PARENT_SESSION_DIR="$ONLINE_SESSIONS_DIR/$SESSION_ID"
-
-# ---- Collect related parent/child sessions ----
-# A Rokid parent session stores the cross-day memory. Each child session stores
-# one Rokid DAY run, normally named {parent_session_id}__day0001.
 add_session_id "$SESSION_ID"
-
-DAY_STATE_PATH="$PARENT_SESSION_DIR/stream/day_state.json"
-if [ -f "$DAY_STATE_PATH" ]; then
-    while IFS= read -r child_session_id; do
-        add_session_id "$child_session_id"
-    done < <("$PYTHON_BIN" - "$DAY_STATE_PATH" <<'PY'
-import json
-import re
-import sys
-
-path = sys.argv[1]
-try:
-    with open(path, "r", encoding="utf-8") as f:
-        payload = json.load(f)
-except Exception:
-    sys.exit(0)
-
-if not isinstance(payload, dict):
-    sys.exit(0)
-
-runs = payload.get("runs")
-if not isinstance(runs, dict):
-    sys.exit(0)
-
-seen = set()
-for run in runs.values():
-    if not isinstance(run, dict):
-        continue
-    child_id = str(run.get("child_session_id") or "").strip()
-    if child_id and re.fullmatch(r"[A-Za-z0-9_-]+", child_id) and child_id not in seen:
-        seen.add(child_id)
-        print(child_id)
-PY
-)
-fi
-
-# Fallback for missing/stale day_state.json: scan conventional child dirs.
-if [ -d "$ONLINE_SESSIONS_DIR" ]; then
-    shopt -s nullglob
-    for child_dir in "$ONLINE_SESSIONS_DIR/${SESSION_ID}__day"*; do
-        if [ -d "$child_dir" ]; then
-            add_session_id "$(basename "$child_dir")"
-        fi
-    done
-    shopt -u nullglob
-fi
 
 echo "  Sessions to clean: ${SESSION_IDS[*]}"
 echo ""
 
-# 1) Parent and child session directories.
+# 1) Session directory.
 for sid in "${SESSION_IDS[@]}"; do
     add_delete_item "$ONLINE_SESSIONS_DIR/$sid"
 done
 
 # 2) Task files across online_tasks and online_tasks_aborted.
-# Most task files are named {session_id}_*.json. Rokid merge tasks also carry
-# parent_session_id and child_session_id in JSON, so inspect JSON fields too.
+# Most task files are named {session_id}_*.json; inspect JSON fields too.
 declare -a TASK_BASES=(
     "$PROJECT_ROOT/online_tasks"
     "$PROJECT_ROOT/online_tasks_aborted"
@@ -211,8 +159,7 @@ for task_base in "${TASK_BASES[@]}"; do
     fi
 done
 
-# 3) Runtime active-session markers, only if they point at the parent or one of
-# its child sessions.
+# 3) Runtime active-session markers, only if they point at this session.
 for runtime_file in \
     "$PROJECT_ROOT/runtime/active_session.json" \
     "$PROJECT_ROOT/runtime/active_rokid_session.json"

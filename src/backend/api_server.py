@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 import threading
 import hashlib
 import mimetypes
@@ -28,9 +29,9 @@ from online_preprocess.task_queue import (
     get_queue_dirs,
 )
 from online_pipeline.stream_timeline import append_timeline_event
-from online_query.stream_transport import query_stream_events_path, read_query_stream_events
 from online_retrieval_scheme import normalize_long_term_retrieval_scheme
 from online_qa_history import append_qa_history, load_qa_history, qa_history_path
+from online_query.stream_transport import query_stream_events_path, read_query_stream_events
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -48,6 +49,83 @@ ROKID_ACTIVE_SESSION_PATH = Path("runtime") / "active_rokid_session.json"
 
 
 app = FastAPI(title="Em2Mem Upload API")
+
+
+VOICE_QUESTION_TIMING_PREFIX = "[DEBUG-vq-timing]"
+
+
+def _vq_timing_ms(start: float | None) -> int | None:
+    if start is None:
+        return None
+    return int(round((time.perf_counter() - start) * 1000))
+
+
+def _vq_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _vq_delta_ms(start: datetime | None, end: datetime | None) -> int | None:
+    if start is None or end is None:
+        return None
+    return int(round((end - start).total_seconds() * 1000))
+
+
+def _vq_timing_log(event: str, **fields: Any) -> None:
+    payload: dict[str, Any] = {
+        "event": event,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+    for key, value in fields.items():
+        if value is None:
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            payload[key] = value
+        else:
+            payload[key] = str(value)
+    print(f"{VOICE_QUESTION_TIMING_PREFIX} {json.dumps(payload, ensure_ascii=False, sort_keys=True)}", flush=True)
+
+
+def _is_voice_question_timing_path(method: str, path: str) -> bool:
+    if method.upper() != "POST":
+        return False
+    return path.endswith("/audio_question") or path.endswith("/audio_question/stream")
+
+
+@app.middleware("http")
+async def _voice_question_timing_middleware(request: FastAPIRequest, call_next):
+    path = request.url.path
+    if not _is_voice_question_timing_path(request.method, path):
+        return await call_next(request)
+
+    request_id = uuid4().hex[:8]
+    started_at = time.perf_counter()
+    request.state.vq_timing_id = request_id
+    request.state.vq_timing_start = started_at
+    client = request.client.host if request.client else ""
+    _vq_timing_log("request_received", request_id=request_id, path=path, client=client)
+    status_code: int | None = None
+    error: str | None = None
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    except Exception as exc:
+        error = str(exc)
+        raise
+    finally:
+        _vq_timing_log(
+            "response_sent",
+            request_id=request_id,
+            path=path,
+            status_code=status_code,
+            total_ms=_vq_timing_ms(started_at),
+            error=error,
+        )
 
 
 def _cors_origins() -> list[str]:
@@ -80,6 +158,8 @@ async def _run_voice_question_asr_via_worker(
     output_srt: Path,
     output_json: Path,
     duration_ms: int | None,
+    timing_id: str | None = None,
+    timing_start: float | None = None,
 ) -> list[dict[str, Any]]:
     timeout_seconds = float(os.getenv("EM2MEM_VOICE_QUESTION_WORKER_ASR_TIMEOUT", "25") or 25)
     if timeout_seconds <= 0:
@@ -88,6 +168,7 @@ async def _run_voice_question_asr_via_worker(
     session_dir = ONLINE_SESSIONS_DIR / session_id
     upload_rel = audio_path.relative_to(session_dir).as_posix()
     upload_chunk_id = f"voice_question_{question_id}"
+    enqueue_started_at = time.perf_counter()
     task_path = enqueue_stream_asr_task(
         PROJECT_ROOT,
         session_id=session_id,
@@ -106,9 +187,22 @@ async def _run_voice_question_asr_via_worker(
         input_source="rokid_audio_question",
     )
     task_name = task_path.name
+    _vq_timing_log(
+        "asr_task_enqueued",
+        request_id=timing_id,
+        session_id=session_id,
+        audio_question_id=question_id,
+        task_name=task_name,
+        backend=os.getenv("EM2MEM_VOICE_QUESTION_ASR_BACKEND", "whisperx"),
+        stage_ms=_vq_timing_ms(enqueue_started_at),
+        elapsed_from_request_ms=_vq_timing_ms(timing_start),
+    )
     dirs = get_queue_dirs(PROJECT_ROOT)
     deadline = asyncio.get_running_loop().time() + timeout_seconds
+    wait_started_at = time.perf_counter()
+    poll_count = 0
     while asyncio.get_running_loop().time() < deadline:
+        poll_count += 1
         done_path = dirs["stream_asr_done"] / task_name
         if done_path.exists():
             payload = read_json(done_path, default={})
@@ -118,6 +212,23 @@ async def _run_voice_question_asr_via_worker(
                 segments = read_json(output_json, default=[])
             if not isinstance(segments, list):
                 return []
+            task_created_at = _vq_datetime(payload.get("created_at") if isinstance(payload, dict) else None)
+            task_claimed_at = _vq_datetime(payload.get("claimed_at") if isinstance(payload, dict) else None)
+            task_updated_at = _vq_datetime(payload.get("updated_at") if isinstance(payload, dict) else None)
+            _vq_timing_log(
+                "asr_task_done_seen",
+                request_id=timing_id,
+                session_id=session_id,
+                audio_question_id=question_id,
+                task_name=task_name,
+                polls=poll_count,
+                wait_ms=_vq_timing_ms(wait_started_at),
+                task_queue_wait_ms=_vq_delta_ms(task_created_at, task_claimed_at),
+                task_worker_ms=_vq_delta_ms(task_claimed_at, task_updated_at),
+                task_total_ms=_vq_delta_ms(task_created_at, task_updated_at),
+                elapsed_from_request_ms=_vq_timing_ms(timing_start),
+                segment_count=len(segments),
+            )
             for segment in segments:
                 if isinstance(segment, dict) and isinstance(segment.get("text"), str):
                     segment["text"] = simplify_chinese_text(segment["text"])
@@ -191,6 +302,8 @@ def _attach_answer_audio_for_response(
     *,
     task_id: str | None = None,
 ) -> dict[str, Any]:
+    if not bool(getattr(request, "answer_tts", False)):
+        return result
     try:
         from online_preprocess.tts_xfyun import attach_answer_audio_to_result
 
@@ -215,11 +328,10 @@ def _attach_answer_audio_for_response(
         return result
 
 
-def _rokid_day_session_enabled() -> bool:
-    return _env_bool("EM2MEM_ROKID_DAY_SESSION_ENABLED", True)
-
-
 def _sse_event(event: str, data: Any) -> str:
+    if isinstance(data, dict):
+        data = dict(data)
+        data.setdefault("server_sent_at", utc_now_iso())
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
@@ -304,7 +416,7 @@ def _new_stream_query_task(
         "retrieval_mode": request.retrieval_mode,
         "use_image_evidence": request.use_image_evidence,
         "max_image_frames": request.max_image_frames,
-        "max_image_evidence": request.max_image_evidence if request.max_image_evidence is not None else 3,
+        "max_image_evidence": request.max_image_evidence if request.max_image_evidence is not None else 1,
         "text_top_k": request.text_top_k,
         "visual_top_k": request.visual_top_k,
         "final_evidence_k": request.final_evidence_k,
@@ -593,7 +705,7 @@ class AskRequest(BaseModel):
     retrieval_mode: str = "auto"
     use_image_evidence: Any = "auto"
     max_image_frames: int = 4
-    max_image_evidence: Optional[int] = 3
+    max_image_evidence: Optional[int] = 1
     text_top_k: Optional[int] = None
     visual_top_k: Optional[int] = None
     final_evidence_k: Optional[int] = None
@@ -608,6 +720,7 @@ class AskRequest(BaseModel):
     retrieval_scheme: Optional[str] = None
     client_source: str = "unknown"
     input_method: str = "unknown"
+    answer_tts: bool = False
 
 
 class QaHistoryAppendRequest(BaseModel):
@@ -652,9 +765,7 @@ class AppendMemoryIncrementalRequest(BaseModel):
 
 class StreamStartRequest(BaseModel):
     session_id: Optional[str] = None
-    parent_session_id: Optional[str] = None
     run_id: Optional[str] = None
-    create_parent_session: bool = False
     input_mode: Optional[str] = None
     chunk_duration: float = 5.0
     metadata: Optional[dict[str, Any]] = None
@@ -725,10 +836,9 @@ def _evidence_frame_owner_session_id(frame: dict[str, Any], requested_session_id
         return existing_owner
     path = frame.get("path") or frame.get("image_path")
     if _evidence_frame_uses_long_term_session(path):
-        for key in ("long_term_session_id", "parent_session_id"):
-            owner = str(stream_context.get(key) or "").strip()
-            if owner:
-                return owner
+        owner = str(stream_context.get("long_term_session_id") or "").strip()
+        if owner:
+            return owner
     return requested_session_id
 
 
@@ -1556,7 +1666,16 @@ async def _prepare_audio_question_transcript(
     sample_width: Optional[int],
     encoding: Optional[str],
     audio_format: Optional[str],
+    timing_id: str | None = None,
+    timing_start: float | None = None,
 ) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+    prepare_started_at = time.perf_counter()
+    _vq_timing_log(
+        "prepare_start",
+        request_id=timing_id,
+        session_id=session_id,
+        elapsed_from_request_ms=_vq_timing_ms(timing_start),
+    )
     if audio is None:
         return None, JSONResponse(status_code=400, content={"status": "error", "message": "No audio uploaded. Expected form field 'audio'."})
     if not _valid_session_id(session_id):
@@ -1570,19 +1689,49 @@ async def _prepare_audio_question_transcript(
     if not session_dir.exists():
         return None, JSONResponse(status_code=404, content={"status": "error", "message": f"session not found: {session_id}"})
 
+    imports_started_at = time.perf_counter()
     from online_pipeline.frame_stream import frame_stream_input_mode
     from online_pipeline.rokid_ingest import RokidNormalizationError, normalize_rokid_audio_upload
+    _vq_timing_log(
+        "prepare_imports_done",
+        request_id=timing_id,
+        session_id=session_id,
+        stage_ms=_vq_timing_ms(imports_started_at),
+        elapsed_from_request_ms=_vq_timing_ms(timing_start),
+    )
 
+    read_started_at = time.perf_counter()
     payload = await audio.read()
+    _vq_timing_log(
+        "audio_read_done",
+        request_id=timing_id,
+        session_id=session_id,
+        stage_ms=_vq_timing_ms(read_started_at),
+        elapsed_from_request_ms=_vq_timing_ms(timing_start),
+        upload_bytes=len(payload),
+        filename=audio.filename or "",
+        content_type=audio.content_type or "",
+    )
     if not payload:
         return None, JSONResponse(status_code=400, content={"status": "error", "message": "empty audio question"})
     if len(payload) > CHUNK_SIZE_BYTES:
         return None, JSONResponse(status_code=413, content={"status": "error", "message": "audio question is too large"})
 
+    state_started_at = time.perf_counter()
     stream_state = read_json(session_dir / "stream" / "stream_state.json", default={})
     if not isinstance(stream_state, dict):
         stream_state = {}
     input_mode = frame_stream_input_mode(stream_state.get("input_mode") or "frame_audio_stream")
+    _vq_timing_log(
+        "stream_state_read_done",
+        request_id=timing_id,
+        session_id=session_id,
+        stage_ms=_vq_timing_ms(state_started_at),
+        elapsed_from_request_ms=_vq_timing_ms(timing_start),
+        input_mode=input_mode,
+    )
+    normalize_started_at = time.perf_counter()
+    original_payload_bytes = len(payload)
     try:
         payload, audio_format, _ = normalize_rokid_audio_upload(
             payload,
@@ -1593,19 +1742,58 @@ async def _prepare_audio_question_transcript(
             sample_width=sample_width,
             encoding=encoding,
         )
+        _vq_timing_log(
+            "audio_normalize_done",
+            request_id=timing_id,
+            session_id=session_id,
+            stage_ms=_vq_timing_ms(normalize_started_at),
+            elapsed_from_request_ms=_vq_timing_ms(timing_start),
+            input_bytes=original_payload_bytes,
+            output_bytes=len(payload),
+            audio_format=audio_format or "",
+        )
     except RokidNormalizationError as exc:
+        _vq_timing_log(
+            "audio_normalize_failed",
+            request_id=timing_id,
+            session_id=session_id,
+            stage_ms=_vq_timing_ms(normalize_started_at),
+            elapsed_from_request_ms=_vq_timing_ms(timing_start),
+            error=str(exc),
+        )
         return None, JSONResponse(status_code=400, content={"status": "error", "message": str(exc), "input_mode": input_mode})
 
     question_id = uuid4().hex
     question_dir = session_dir / "stream" / "audio_questions"
+    path_started_at = time.perf_counter()
     question_dir.mkdir(parents=True, exist_ok=True)
     audio_path = question_dir / f"{question_id}.wav"
     transcript_json = question_dir / f"{question_id}.json"
     transcript_srt = question_dir / f"{question_id}.srt"
+    _vq_timing_log(
+        "question_paths_ready",
+        request_id=timing_id,
+        session_id=session_id,
+        audio_question_id=question_id,
+        stage_ms=_vq_timing_ms(path_started_at),
+        elapsed_from_request_ms=_vq_timing_ms(timing_start),
+    )
+    write_started_at = time.perf_counter()
     audio_path.write_bytes(payload)
+    _vq_timing_log(
+        "audio_file_written",
+        request_id=timing_id,
+        session_id=session_id,
+        audio_question_id=question_id,
+        stage_ms=_vq_timing_ms(write_started_at),
+        elapsed_from_request_ms=_vq_timing_ms(timing_start),
+        bytes=len(payload),
+        audio_path=str(audio_path.relative_to(session_dir)),
+    )
 
     stream_id = str(stream_state.get("stream_id") or stream_state.get("session_id") or session_id)
     try:
+        asr_started_at = time.perf_counter()
         segments = await _run_voice_question_asr_via_worker(
             session_id=session_id,
             stream_id=stream_id,
@@ -1614,6 +1802,17 @@ async def _prepare_audio_question_transcript(
             output_srt=transcript_srt,
             output_json=transcript_json,
             duration_ms=duration_ms,
+            timing_id=timing_id,
+            timing_start=timing_start,
+        )
+        _vq_timing_log(
+            "asr_wait_returned",
+            request_id=timing_id,
+            session_id=session_id,
+            audio_question_id=question_id,
+            stage_ms=_vq_timing_ms(asr_started_at),
+            elapsed_from_request_ms=_vq_timing_ms(timing_start),
+            segment_count=len(segments),
         )
     except Exception as exc:
         print(f"[api] voice question worker ASR failed session={session_id} question_id={question_id}: {exc}", flush=True)
@@ -1627,6 +1826,15 @@ async def _prepare_audio_question_transcript(
             },
         )
     question = simplify_chinese_text(" ".join(str(item.get("text") or "").strip() for item in segments if str(item.get("text") or "").strip()).strip())
+    _vq_timing_log(
+        "transcript_ready",
+        request_id=timing_id,
+        session_id=session_id,
+        audio_question_id=question_id,
+        prepare_total_ms=_vq_timing_ms(prepare_started_at),
+        elapsed_from_request_ms=_vq_timing_ms(timing_start),
+        question_chars=len(question),
+    )
     if not question:
         return None, JSONResponse(status_code=422, content={"status": "no_speech", "message": "no speech recognized", "session_id": session_id})
 
@@ -1652,6 +1860,7 @@ def _json_response_payload(response: JSONResponse) -> dict[str, Any]:
 @app.post("/stream/{session_id}/audio_question")
 async def stream_audio_question(
     session_id: str,
+    request: FastAPIRequest,
     audio: Optional[UploadFile] = File(default=None),
     duration_ms: Optional[int] = Form(default=None),
     sample_rate: Optional[int] = Form(default=None),
@@ -1665,15 +1874,27 @@ async def stream_audio_question(
     top_k: int = Form(default=5),
     use_current: Optional[bool] = Form(default=True),
     use_image_evidence: Any = Form(default="auto"),
-    max_image_evidence: Optional[int] = Form(default=6),
+    max_image_evidence: Optional[int] = Form(default=1),
     use_interaction_cache: bool = Form(default=True),
     debug_router: bool = Form(default=True),
     long_term_retrieval_scheme: Optional[str] = Form(default=None),
     retrieval_scheme: Optional[str] = Form(default=None),
     client_source: str = Form(default="glasses"),
     input_method: str = Form(default="voice"),
+    answer_tts: bool = Form(default=False),
 ) -> JSONResponse:
+    timing_id = str(getattr(request.state, "vq_timing_id", "") or "")
+    timing_start = getattr(request.state, "vq_timing_start", None)
+    route_started_at = time.perf_counter()
+    _vq_timing_log(
+        "route_enter",
+        request_id=timing_id,
+        session_id=session_id,
+        path=request.url.path,
+        elapsed_from_request_ms=_vq_timing_ms(timing_start),
+    )
     try:
+        prepare_call_started_at = time.perf_counter()
         prepared, error_response = await _prepare_audio_question_transcript(
             session_id=session_id,
             audio=audio,
@@ -1683,11 +1904,30 @@ async def stream_audio_question(
             sample_width=sample_width,
             encoding=encoding,
             audio_format=audio_format,
+            timing_id=timing_id,
+            timing_start=timing_start,
         )
         if error_response is not None:
+            _vq_timing_log(
+                "prepare_error_response",
+                request_id=timing_id,
+                session_id=session_id,
+                prepare_ms=_vq_timing_ms(prepare_call_started_at),
+                elapsed_from_request_ms=_vq_timing_ms(timing_start),
+                status_code=error_response.status_code,
+            )
             return error_response
+        _vq_timing_log(
+            "prepare_done",
+            request_id=timing_id,
+            session_id=session_id,
+            audio_question_id=prepared.get("audio_question_id") if isinstance(prepared, dict) else "",
+            prepare_ms=_vq_timing_ms(prepare_call_started_at),
+            elapsed_from_request_ms=_vq_timing_ms(timing_start),
+        )
         assert prepared is not None
         question = str(prepared.get("question") or "")
+        ask_started_at = time.perf_counter()
         ask_response = await ask_session(
             session_id,
             AskRequest(
@@ -1705,7 +1945,17 @@ async def stream_audio_question(
                 retrieval_scheme=retrieval_scheme,
                 client_source=client_source,
                 input_method=input_method,
+                answer_tts=answer_tts,
             ),
+        )
+        _vq_timing_log(
+            "ask_session_returned",
+            request_id=timing_id,
+            session_id=session_id,
+            audio_question_id=prepared.get("audio_question_id") if isinstance(prepared, dict) else "",
+            stage_ms=_vq_timing_ms(ask_started_at),
+            elapsed_from_request_ms=_vq_timing_ms(timing_start),
+            status_code=ask_response.status_code,
         )
         content = json.loads(ask_response.body.decode("utf-8")) if ask_response.body else {}
         if isinstance(content, dict):
@@ -1714,6 +1964,16 @@ async def stream_audio_question(
             content["audio_question_id"] = prepared.get("audio_question_id")
             content["audio_question_duration_ms"] = duration_ms
             content = normalize_user_visible_text_fields(content)
+        _vq_timing_log(
+            "route_response_ready",
+            request_id=timing_id,
+            session_id=session_id,
+            audio_question_id=prepared.get("audio_question_id") if isinstance(prepared, dict) else "",
+            route_ms=_vq_timing_ms(route_started_at),
+            elapsed_from_request_ms=_vq_timing_ms(timing_start),
+            status_code=ask_response.status_code,
+            task_id=content.get("task_id") if isinstance(content, dict) else "",
+        )
         return JSONResponse(status_code=ask_response.status_code, content=content)
     except Exception as exc:
         return JSONResponse(status_code=500, content={"status": "error", "message": str(exc), "session_id": session_id})
@@ -1737,11 +1997,12 @@ async def stream_audio_question_stream(
     top_k: int = Form(default=5),
     use_current: Optional[bool] = Form(default=True),
     use_image_evidence: Any = Form(default="auto"),
-    max_image_evidence: Optional[int] = Form(default=6),
+    max_image_evidence: Optional[int] = Form(default=1),
     use_interaction_cache: bool = Form(default=True),
     debug_router: bool = Form(default=True),
     client_source: str = Form(default="glasses"),
     input_method: str = Form(default="voice"),
+    answer_tts: bool = Form(default=False),
 ) -> StreamingResponse:
     async def _events():
         try:
@@ -1815,6 +2076,7 @@ async def stream_audio_question_stream(
                     debug_router=debug_router,
                     client_source=client_source,
                     input_method=input_method,
+                    answer_tts=answer_tts,
                 ),
             )
             if isinstance(ask_response, JSONResponse):
@@ -1899,7 +2161,6 @@ async def _handle_ask_session(
             "short_term_session_id": session_id,
             "long_term_session_id": session_id,
             "interaction_cache_session_id": session_id,
-            "is_rokid_day_child": False,
         }
     realtime_session_id = str(query_context.get("realtime_session_id") or session_id)
     short_term_session_id = str(query_context.get("short_term_session_id") or realtime_session_id)
@@ -2035,6 +2296,7 @@ async def _handle_ask_session(
             retrieval_scheme=request.retrieval_scheme,
             client_source=request.client_source,
             input_method=request.input_method,
+            answer_tts=request.answer_tts,
             allow_inactive_session=allow_inactive_session,
             task_source=task_source,
         )
@@ -2842,52 +3104,6 @@ async def rokid_stream_start(request: StreamStartRequest) -> JSONResponse:
     return await _start_rokid_stream_session(request)
 
 
-async def _start_plain_rokid_stream_session(request: StreamStartRequest, input_mode: str) -> JSONResponse:
-    metadata = dict(request.metadata or {})
-    for key in (
-        "parent_session_id",
-        "child_session_id",
-        "is_rokid_day_child",
-        "day_label",
-        "day_index",
-        "run_id",
-    ):
-        metadata.pop(key, None)
-    metadata["rokid_session_mode"] = "plain"
-    plain_request = StreamStartRequest(
-        session_id=None,
-        parent_session_id=None,
-        run_id=None,
-        create_parent_session=False,
-        input_mode=input_mode,
-        chunk_duration=request.chunk_duration,
-        metadata=metadata,
-        owner_id=request.owner_id,
-        device_id=request.device_id,
-        device_type=request.device_type,
-    )
-    response = await _start_stream_session(
-        plain_request,
-        route_kind="rokid",
-        forced_input_mode=input_mode,
-        allow_rokid=True,
-    )
-    content = _json_response_content(response)
-    if content:
-        content["rokid_session_mode"] = "plain"
-        content["parent_session_id"] = content.get("session_id")
-        content["child_session_id"] = content.get("session_id")
-        content["day_context"] = {
-            "enabled": False,
-            "mode": "plain",
-            "day_label": None,
-            "day_index": None,
-            "run_id": "",
-        }
-        return JSONResponse(status_code=response.status_code, content=content)
-    return response
-
-
 async def _start_rokid_stream_session(request: StreamStartRequest) -> JSONResponse:
     from online_pipeline.rokid_ingest import ROKID_INPUT_MODE, ROKID_INPUT_MODES
 
@@ -2957,9 +3173,7 @@ async def _start_rokid_stream_session(request: StreamStartRequest) -> JSONRespon
 
     stream_request = StreamStartRequest(
         session_id=session_id,
-        parent_session_id=None,
         run_id=run_id,
-        create_parent_session=False,
         input_mode=input_mode,
         chunk_duration=request.chunk_duration,
         metadata=metadata,
@@ -3232,6 +3446,7 @@ async def stream_upload_frame(
             source=effective_source,
             input_mode=input_mode,
             filename_hint=frame.filename,
+            async_memory_updates=is_rokid_input_mode(input_mode),
             allow_live_input=is_rokid_input_mode(input_mode),
         )
         status_code = int(result.pop("_http_status_code", 200))
@@ -3666,8 +3881,6 @@ def _execute_stream_end(
                 "can_ask": True,
                 "active_session_cleared": None,
                 "active_rokid_session_cleared": None,
-                "rokid_day_merge_task": None,
-                "rokid_day_merge_error": None,
                 "already_terminal": True,
                 "stream_status": str(existing_state.get("status") or ""),
             }
@@ -3756,8 +3969,6 @@ def _execute_stream_end(
             "can_ask": True,
             "active_session_cleared": active_session_cleared,
             "active_rokid_session_cleared": active_rokid_session_cleared,
-            "rokid_day_merge_task": None,
-            "rokid_day_merge_error": None,
         }
     except Exception as exc:
         return 500, {"status": "error", "message": str(exc)}
@@ -3890,6 +4101,7 @@ async def rokid_upload_audio_chunk(
 @app.post("/rokid/{session_id}/audio_question")
 async def rokid_audio_question(
     session_id: str,
+    request: FastAPIRequest,
     audio: Optional[UploadFile] = File(default=None),
     duration_ms: Optional[int] = Form(default=None),
     sample_rate: Optional[int] = Form(default=None),
@@ -3903,16 +4115,18 @@ async def rokid_audio_question(
     top_k: int = Form(default=5),
     use_current: Optional[bool] = Form(default=True),
     use_image_evidence: Any = Form(default="auto"),
-    max_image_evidence: Optional[int] = Form(default=6),
+    max_image_evidence: Optional[int] = Form(default=1),
     use_interaction_cache: bool = Form(default=True),
     debug_router: bool = Form(default=True),
     long_term_retrieval_scheme: Optional[str] = Form(default=None),
     retrieval_scheme: Optional[str] = Form(default=None),
     client_source: str = Form(default="glasses"),
     input_method: str = Form(default="voice"),
+    answer_tts: bool = Form(default=False),
 ) -> JSONResponse:
     return await stream_audio_question(
         session_id=session_id,
+        request=request,
         audio=audio,
         duration_ms=duration_ms,
         sample_rate=sample_rate,
@@ -3933,6 +4147,7 @@ async def rokid_audio_question(
         retrieval_scheme=retrieval_scheme,
         client_source=client_source,
         input_method=input_method,
+        answer_tts=answer_tts,
     )
 
 @app.post("/rokid/{session_id}/audio_question/stream", response_model=None)
@@ -3950,11 +4165,12 @@ async def rokid_audio_question_stream(
     top_k: int = Form(default=5),
     use_current: Optional[bool] = Form(default=True),
     use_image_evidence: Any = Form(default="auto"),
-    max_image_evidence: Optional[int] = Form(default=6),
+    max_image_evidence: Optional[int] = Form(default=1),
     use_interaction_cache: bool = Form(default=True),
     debug_router: bool = Form(default=True),
     client_source: str = Form(default="glasses"),
     input_method: str = Form(default="voice"),
+    answer_tts: bool = Form(default=False),
 ) -> StreamingResponse:
     return await stream_audio_question_stream(
         session_id=session_id,
@@ -3975,6 +4191,7 @@ async def rokid_audio_question_stream(
         debug_router=debug_router,
         client_source=client_source,
         input_method=input_method,
+        answer_tts=answer_tts,
     )
 
 @app.get("/rokid/{session_id}/status")

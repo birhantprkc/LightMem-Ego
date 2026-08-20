@@ -780,171 +780,61 @@ class EM2Memory:
 
         query_with_time = self._build_query_with_time(query=query, choices=choices, until_time=until_time)
 
+        # Scores have already determined the candidate pool.  The selector needs
+        # evidence, not five nearly identical score fields per candidate.  Parent
+        # context is shared because neighbouring 30-second anchors frequently
+        # point to the same 3-minute event.
+        parent_contexts: Dict[str, Dict[str, Any]] = {}
+        compact_candidates: List[Dict[str, Any]] = []
+        for candidate in selector_candidates:
+            parent_id = str(candidate.get("parent_3min_doc_id") or "")
+            if parent_id and parent_id not in parent_contexts:
+                parent = {
+                    "caption": candidate.get("parent_3min_caption") or "",
+                    "visual": candidate.get("parent_3min_visual_summary") or "",
+                    "speech": candidate.get("parent_3min_critical_speech") or [],
+                }
+                parent_contexts[parent_id] = {key: value for key, value in parent.items() if value}
+
+            evidence = {
+                "caption": candidate.get("caption") or "",
+                "visual": candidate.get("visual_summary") or "",
+                "keyframe": candidate.get("keyframe_caption") or "",
+                "speech": candidate.get("critical_speech_lines") or [],
+                "triplets": candidate.get("triplets") or [],
+                "semantic": candidate.get("semantic_support") or [],
+            }
+            compact = {
+                "i": candidate.get("index"),
+                "id": candidate.get("doc_id"),
+                "time": f"{candidate.get('start_time')} - {candidate.get('end_time')}",
+                "role": candidate.get("primary_role"),
+                "evidence": {key: value for key, value in evidence.items() if value},
+            }
+            if parent_id:
+                compact["parent"] = parent_id
+            compact_candidates.append(compact)
+
         prompt = [
             {
                 "role": "system",
                 "content": (
-                    "You are selecting event packets for a long-video QA system.\n"
-                    "Your job is NOT to choose events that are merely topically related. "
-                    "Your job is to choose events whose evidence matches the exact predicate asked by the question.\n\n"
-
-                    "You must do two things:\n"
-                    "Step 1: infer the question family from the question.\n"
-                    "Step 2: choose a small, complementary set of event packets that best supports the answer.\n\n"
-
-                    "Use one of these question families:\n"
-                    "1) action-owner\n"
-                    "2) source-trace\n"
-                    "3) participant-membership\n"
-                    "4) plan-intention-decision\n"
-                    "5) temporal-recall\n"
-                    "6) habit-preference\n"
-                    "7) attribute-content-purpose\n\n"
-
-                    "Core principle:\n"
-                    "- Prefer explicit evidence over weak implication.\n"
-                    "- Prefer predicate-aligned evidence over broad contextual relevance.\n"
-                    "- Do not over-select near-duplicate local events.\n"
-                    "- Always return valid candidate indices and/or valid doc_ids from the provided list only.\n\n"
-
-                    "[action-owner]\n"
-                    "Question intent: identify who performed an action, who assisted, or who acted first.\n"
-                    "Strong evidence:\n"
-                    "- explicit actor + explicit queried action\n"
-                    "- explicit cooperation, transfer, or assistance evidence when the question is about helping\n"
-                    "- earliest valid explicit action when the question is about who acted first\n"
-                    "Weak evidence:\n"
-                    "- nearby presence\n"
-                    "- interaction with related objects without the queried action\n"
-                    "- later result scenes without explicit action evidence\n"
-                    "Do NOT:\n"
-                    "- infer the actor only from scene participation\n"
-                    "- replace explicit action evidence with general topic-related context\n\n"
-
-                    "[source-trace]\n"
-                    "Question intent: identify where an object was before, where it came from, or how it was transferred.\n"
-                    "Strong evidence:\n"
-                    "- explicit prior location\n"
-                    "- explicit transfer path\n"
-                    "- explicit retrieval, carrying, bringing, taking, placing, or movement-between-locations evidence\n"
-                    "- earlier events that directly establish previous location\n"
-                    "Weak evidence:\n"
-                    "- current-use scenes\n"
-                    "- current location alone\n"
-                    "- generic earlier background context without explicit source grounding\n"
-                    "Do NOT:\n"
-                    "- treat holding, using, or interacting with an object as sufficient evidence of prior location\n"
-                    "- answer a previous-location question using only current-scene context\n"
-                    "- omit a source-establishing event if one exists\n\n"
-
-                    "[participant-membership]\n"
-                    "Question intent: identify who joined, who helped, who was part of the activity, or who was absent.\n"
-                    "Strong evidence:\n"
-                    "- explicit participation in the shared activity\n"
-                    "- explicit join/help/presence evidence in the relevant action chain\n"
-                    "- contrastive evidence for absence or mismatch across time\n"
-                    "Weak evidence:\n"
-                    "- later co-presence in the same room\n"
-                    "- nearby observer or bystander context\n"
-                    "Do NOT:\n"
-                    "- infer participation only from later appearance\n"
-                    "- confuse bystanders with core participants\n\n"
-
-                    "[plan-intention-decision]\n"
-                    "Question intent: identify a plan, intention, decision, next step, proposal, or commitment.\n"
-                    "Strong evidence:\n"
-                    "- explicit plan, intention, decision, proposal, assignment, or commitment\n"
-                    "- agent-specific future commitment\n"
-                    "- final-decision evidence\n"
-                    "Weak evidence:\n"
-                    "- related discussion\n"
-                    "- explanation, recommendation, or evaluation\n"
-                    "- general topic proximity\n"
-                    "- observation statements without commitment\n"
-                    "- offer or suggestion unless it clearly implies the agent's own intended action\n"
-                    "Do NOT:\n"
-                    "- infer intention from discussion alone\n"
-                    "- infer a personal plan from explanation or recommendation alone\n"
-                    "- confuse proposal, observation, ownership, or topic relevance with intention\n\n"
-
-                    "[temporal-recall]\n"
-                    "Question intent: identify the last time, first time, previous occurrence, or temporally constrained event.\n"
-                    "Strong evidence:\n"
-                    "- event whose timestamp best satisfies the temporal constraint\n"
-                    "- closest valid earlier or later occurrence that truly matches the queried event or topic\n"
-                    "Weak evidence:\n"
-                    "- semantically similar event at the wrong time\n"
-                    "- salient but temporally invalid event\n"
-                    "Do NOT:\n"
-                    "- ignore first/last/before/after constraints\n"
-                    "- choose a more relevant-looking event if its time is wrong\n\n"
-
-                    "[habit-preference]\n"
-                    "Question intent: identify a repeated behavior, usual pattern, stable preference, or dislike.\n"
-                    "Strong evidence:\n"
-                    "- repeated evidence across multiple events\n"
-                    "- explicit preference statements\n"
-                    "- aggregate frequency patterns\n"
-                    "Weak evidence:\n"
-                    "- one-off action\n"
-                    "- isolated or accidental occurrence\n"
-                    "Do NOT:\n"
-                    "- infer a habit from only one weak event if stronger repeated evidence exists\n"
-                    "- confuse temporary behavior with stable preference\n\n"
-
-                    "[attribute-content-purpose]\n"
-                    "Question intent: identify ownership, contents, identity, purpose, attribute, or category.\n"
-                    "Strong evidence:\n"
-                    "- direct statement of ownership, contents, identity, purpose, or queried attribute\n"
-                    "- explicit visual or textual grounding of the queried property\n"
-                    "Weak evidence:\n"
-                    "- nearby action context\n"
-                    "- related discussion without direct attribute grounding\n"
-                    "Do NOT:\n"
-                    "- replace a direct attribute question with surrounding activity\n"
-                    "- infer ownership, content, purpose, or identity from loose association alone\n\n"
-
-                    "Global anti-error rules:\n"
-                    "- Do not infer agent ownership from scene participation alone.\n"
-                    "- Do not infer intention from topic discussion alone.\n"
-                    "- Do not infer source from current location alone.\n"
-                    "- Do not infer habits from a single weak event if stronger repeated evidence exists.\n"
-                    "- Do not infer attributes from nearby actions when direct grounding exists.\n"
-                    "- When direct evidence and broad contextual evidence conflict, prefer direct evidence.\n"
-                    "- Use role scores as hints, not hard constraints.\n"
-                    "- Prefer a smaller set of directly relevant events over a larger set of vaguely related events.\n"
-                    "- If a question has a critical constraint (actor, source, time, intention, ownership, identity), at least one selected event should directly ground that constraint."
+                    "Select the smallest complementary set of long-video events that directly answers the question. "
+                    "Use explicit predicate-aligned evidence over topical proximity, and return only valid indices. "
+                    "Enforce time words strictly. For actor, source, participation, plan, ownership, contents, "
+                    "identity, purpose, or attribute questions, select direct grounding rather than nearby context. "
+                    "For source questions require an earlier location or transfer; for plans require an explicit "
+                    "commitment; for habits prefer repeated evidence; never infer these from presence alone. "
+                    "Avoid near-duplicate events. Parent contexts are shared by the parent id in each candidate."
                 ),
             },
             {
                 "role": "user",
                 "content": (
                     f"{query_with_time}\n\n"
-                    f"Candidate Event Packets:\n{json.dumps(selector_candidates, ensure_ascii=False, indent=2)}\n\n"
-                    f"Select the best {final_top_k} candidates.\n\n"
-
-                    "Selection goals:\n"
-                    "- Choose complementary evidence, not repetitive evidence.\n"
-                    "- Retain at least one event that directly grounds the core predicate of the question.\n"
-                    "- If the question requires prior-state or source evidence, retain the event that directly establishes that prior state, even if it is earlier and less salient.\n"
-                    "- If the question requires intention or decision evidence, retain explicit commitment or decision evidence rather than topic-related discussion.\n"
-                    "- If the question requires identifying an actor, retain explicit actor evidence.\n"
-                    "- If the question requires temporal comparison, enforce the temporal constraint strictly.\n"
-                    "- If the question requires a stable habit or preference, prefer repeated or aggregate evidence over one-off evidence.\n"
-                    "- If the question requires ownership, contents, identity, purpose, or attribute, prefer direct grounding over surrounding context.\n\n"
-
-                    "Output requirements:\n"
-                    "- Infer the correct question_family first.\n"
-                    "- Then select the best candidates.\n"
-                    "- The reason must explain why the selected events satisfy the core predicate better than merely related events.\n\n"
-
-                    "Return ONLY JSON in this format:\n"
-                    "{"
-                    "\"question_family\": \"...\", "
-                    "\"selected_indices\": [..], "
-                    "\"selected_doc_ids\": [..], "
-                    "\"reason\": \"...\""
-                    "}"
+                    f"Shared parent context: {json.dumps(parent_contexts, ensure_ascii=False, separators=(',', ':'))}\n"
+                    f"Candidates: {json.dumps(compact_candidates, ensure_ascii=False, separators=(',', ':'))}\n\n"
+                    f"Select at most {final_top_k} candidates. Return ONLY {{\"selected_indices\":[..]}}."
                 ),
             },
         ]
@@ -1591,16 +1481,11 @@ class EM2Memory:
                 logger.error(f"Failed to load {qa_template_name} template: {e}")
                 raise
 
-            qa_content = [{"type": "text", "text": full_query + "\n\nContext:\n"}]
+            qa_content = [{"type": "text", "text": full_query + "\n\nSelected evidence:\n"}]
             qa_content.append({
                 "type": "text",
                 "text": (
-                    "Selector summary:\n"
-                    f"Chosen event anchors: {top_doc_ids}\n"
-                    f"Selector reason: {selector_reason}\n"
-                    "The selected event anchors were chosen because they form the strongest evidence chain for this question.\n"
-                    "Use these selected events as the primary basis for answering.\n"
-                    "Do not override a clearly supported conclusion from the selected evidence with a weaker alternative."
+                    "Answer from the selected evidence below. Prefer direct support over weaker related context."
                 )
             })
             qa_content.extend(self._render_retrieved_items_for_qa(retrieved_items))
@@ -1622,10 +1507,7 @@ class EM2Memory:
                     )
 
                 grounding_lines.append(
-                    "Answer selection rule: choose the option best supported by the retrieved evidence and the selector summary above."
-                )
-                grounding_lines.append(
-                    "If the selector reason and selected events clearly support a specific option, do not override it with a weaker alternative."
+                    "Choose the option best supported by the retrieved evidence."
                 )
                 grounding_lines.append(
                     "Please provide only the final answer from the choices given (e.g., A, B, C, or D)."
