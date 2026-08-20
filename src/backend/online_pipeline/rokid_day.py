@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import shutil
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,9 +12,21 @@ from online_preprocess.io_utils import read_json, utc_now_iso, write_json_atomic
 from .file_lock import FileLock
 
 
-DAY_CHILD_SEPARATOR = "__day"
 DAY_STATE_RELATIVE_PATH = Path("stream") / "day_state.json"
-DAY_MERGE_STATE_RELATIVE_PATH = Path("stream") / "day_merge_state.json"
+WEEKDAY_LABELS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+WEEKDAY_LABELS_EN = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+TIME_CONTEXT_KEYS = (
+    "start_datetime",
+    "display_date",
+    "display_time",
+    "display_datetime",
+    "display_iso",
+    "display_hhmmssff",
+    "timezone",
+    "time_source",
+    "client_session_start_ts_ms",
+    "client_timezone_offset_minutes",
+)
 
 
 def _format_cn_date(value: datetime) -> str:
@@ -82,6 +93,20 @@ def _safe_epoch_ms(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
 def build_rokid_time_context(metadata: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = dict(metadata or {})
     tz, tz_label = _timezone_from_metadata(payload)
@@ -96,15 +121,15 @@ def build_rokid_time_context(metadata: dict[str, Any] | None = None) -> dict[str
             tz = timezone.utc
             tz_label = "UTC"
             time_source = "server_receive_fallback"
-        else:
-            time_source = "client_device"
     return {
         "start_datetime": _format_datetime(start),
         "display_date": _format_cn_date(start),
         "display_time": _format_time(start),
         "display_datetime": _format_datetime(start),
         "display_iso": start.isoformat(timespec="seconds"),
-        "display_hhmmssff": _seconds_to_hhmmssff(start.hour * 3600 + start.minute * 60 + start.second + start.microsecond / 1_000_000),
+        "display_hhmmssff": _seconds_to_hhmmssff(
+            start.hour * 3600 + start.minute * 60 + start.second + start.microsecond / 1_000_000
+        ),
         "timezone": tz_label,
         "time_source": time_source,
         "client_session_start_ts_ms": epoch_ms,
@@ -130,7 +155,9 @@ def rokid_display_payload_for_relative_time(context: dict[str, Any] | None, rela
         "display_time": _format_time(value),
         "display_datetime": _format_datetime(value),
         "display_iso": value.isoformat(timespec="seconds"),
-        "display_hhmmssff": _seconds_to_hhmmssff(value.hour * 3600 + value.minute * 60 + value.second + value.microsecond / 1_000_000),
+        "display_hhmmssff": _seconds_to_hhmmssff(
+            value.hour * 3600 + value.minute * 60 + value.second + value.microsecond / 1_000_000
+        ),
         "timezone": payload.get("timezone") or "UTC",
         "time_source": payload.get("time_source") or "unknown",
     }
@@ -148,29 +175,33 @@ def normalize_run_id(run_id: Any) -> str:
 
 
 def normalize_day_label(day_index: Any) -> str:
-    try:
-        index = max(1, int(day_index))
-    except Exception:
-        index = 1
-    return f"DAY{index}"
+    return f"DAY{max(1, _safe_int(day_index, 1))}"
 
 
-def child_session_id(parent_session_id: str, day_index: int) -> str:
-    return f"{parent_session_id}{DAY_CHILD_SEPARATOR}{day_index:04d}"
+def weekday_label_for_day(day_index: Any) -> str:
+    index = max(1, _safe_int(day_index, 1))
+    return WEEKDAY_LABELS[(index - 1) % len(WEEKDAY_LABELS)]
 
 
-def day_state_path(parent_dir: Path) -> Path:
-    return parent_dir / DAY_STATE_RELATIVE_PATH
+def weekday_label_en_for_day(day_index: Any) -> str:
+    index = max(1, _safe_int(day_index, 1))
+    return WEEKDAY_LABELS_EN[(index - 1) % len(WEEKDAY_LABELS_EN)]
 
 
-def day_merge_state_path(parent_dir: Path) -> Path:
-    return parent_dir / DAY_MERGE_STATE_RELATIVE_PATH
+def display_day_label_for_day(day_index: Any) -> str:
+    index = max(1, _safe_int(day_index, 1))
+    return f"{normalize_day_label(index)} {weekday_label_for_day(index)}"
 
 
-def _empty_day_state(parent_session_id: str) -> dict[str, Any]:
+def day_state_path(session_dir: Path) -> Path:
+    return Path(session_dir) / DAY_STATE_RELATIVE_PATH
+
+
+def _empty_single_session_day_state(session_id: str) -> dict[str, Any]:
     now = utc_now_iso()
     return {
-        "parent_session_id": parent_session_id,
+        "mode": "single_session",
+        "session_id": session_id,
         "next_day_index": 1,
         "runs": {},
         "created_at": now,
@@ -178,256 +209,237 @@ def _empty_day_state(parent_session_id: str) -> dict[str, Any]:
     }
 
 
-def load_day_state(parent_dir: Path, parent_session_id: str) -> dict[str, Any]:
-    state = read_json(day_state_path(parent_dir), default={})
-    if not isinstance(state, dict) or not state:
-        return _empty_day_state(parent_session_id)
-    state.setdefault("parent_session_id", parent_session_id)
+def load_single_session_day_state(session_dir: Path, session_id: str | None = None) -> dict[str, Any]:
+    session_id = str(session_id or Path(session_dir).name)
+    state = read_json(day_state_path(session_dir), default={})
+    if not isinstance(state, dict) or state.get("mode") != "single_session":
+        return _empty_single_session_day_state(session_id)
+    state.setdefault("session_id", session_id)
     state.setdefault("next_day_index", 1)
     if not isinstance(state.get("runs"), dict):
         state["runs"] = {}
     return state
 
 
-def save_day_state(parent_dir: Path, state: dict[str, Any]) -> None:
+def save_single_session_day_state(session_dir: Path, state: dict[str, Any]) -> None:
+    state["mode"] = "single_session"
     state["updated_at"] = utc_now_iso()
-    write_json_atomic(day_state_path(parent_dir), state)
+    write_json_atomic(day_state_path(session_dir), state)
 
 
-def reserve_rokid_day_child(
+def current_single_session_day_run(session_dir: Path) -> dict[str, Any] | None:
+    state = load_single_session_day_state(session_dir)
+    runs = [run for run in state.get("runs", {}).values() if isinstance(run, dict)]
+    if not runs:
+        return None
+    runs.sort(key=lambda item: (_safe_int(item.get("day_index"), 0), str(item.get("created_at") or "")))
+    return copy.deepcopy(runs[-1])
+
+
+def _latest_index(session_dir: Path, state_file: str, key: str) -> int:
+    state = read_json(session_dir / "stream" / state_file, default={})
+    return _safe_int(state.get(key), -1) if isinstance(state, dict) else -1
+
+
+def _latest_relative_ts_ms(session_dir: Path) -> int:
+    values: list[int] = []
+    for rel_path, keys in (
+        (Path("stream") / "frame_state.json", ("latest_relative_ts_ms", "latest_memory_relative_ts_ms")),
+        (Path("stream") / "audio_state.json", ("latest_relative_ts_ms",)),
+        (Path("stream") / "rokid_state.json", ("latest_frame_relative_ts_ms", "latest_audio_relative_ts_ms")),
+    ):
+        state = read_json(session_dir / rel_path, default={})
+        if not isinstance(state, dict):
+            continue
+        for key in keys:
+            if state.get(key) is not None:
+                values.append(max(0, _safe_int(state.get(key), 0)))
+    return max(values) if values else -1
+
+
+def next_single_session_upload_offsets(session_dir: Path) -> dict[str, int]:
+    latest_relative_ts_ms = _latest_relative_ts_ms(session_dir)
+    return {
+        "next_frame_index": _latest_index(session_dir, "frame_state.json", "latest_frame_index") + 1,
+        "next_audio_index": _latest_index(session_dir, "audio_state.json", "latest_audio_index") + 1,
+        "relative_ts_base_ms": latest_relative_ts_ms + 1,
+    }
+
+
+def day_context_for_single_session_run(run: dict[str, Any]) -> dict[str, Any]:
+    day_index = max(1, _safe_int(run.get("day_index"), 1))
+    context = {
+        "enabled": True,
+        "mode": "single_session",
+        "day_label": str(run.get("day_label") or normalize_day_label(day_index)),
+        "day_index": day_index,
+        "weekday_label": str(run.get("weekday_label") or weekday_label_for_day(day_index)),
+        "weekday_label_en": str(run.get("weekday_label_en") or weekday_label_en_for_day(day_index)),
+        "display_day_label": str(run.get("display_day_label") or display_day_label_for_day(day_index)),
+        "run_id": str(run.get("run_id") or ""),
+        "relative_ts_base_ms": max(0, _safe_int(run.get("start_relative_ts_ms"), 0)),
+    }
+    context.update({key: run.get(key) for key in TIME_CONTEXT_KEYS if run.get(key) is not None})
+    return context
+
+
+def reserve_single_session_day_run(
     *,
-    sessions_root: Path,
-    parent_session_id: str,
+    session_dir: Path,
+    session_id: str,
     run_id: str,
     input_mode: str,
     metadata: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Reserve or return the child session assigned to a Rokid Start run."""
-
-    if not valid_session_id(parent_session_id):
-        raise ValueError("invalid parent_session_id")
+    if not valid_session_id(session_id):
+        raise ValueError("invalid session_id")
     normalized_run_id = normalize_run_id(run_id)
     if not normalized_run_id:
         raise ValueError("run_id is required")
 
-    parent_dir = sessions_root / parent_session_id
-    parent_dir.mkdir(parents=True, exist_ok=True)
-    stream_dir = parent_dir / "stream"
+    session_dir = Path(session_dir)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    stream_dir = session_dir / "stream"
     stream_dir.mkdir(parents=True, exist_ok=True)
-    lock = FileLock(str(stream_dir / "day_state.lock"), timeout=30)
-    with lock:
-        state = load_day_state(parent_dir, parent_session_id)
+    with FileLock(str(stream_dir / "day_state.lock"), timeout=30):
+        state = load_single_session_day_state(session_dir, session_id)
         runs = state.setdefault("runs", {})
         existing = runs.get(normalized_run_id)
-        if isinstance(existing, dict) and existing.get("child_session_id"):
+        if isinstance(existing, dict):
             return copy.deepcopy(existing), state
 
-        used_day_indices: set[int] = set()
-        for run in runs.values():
-            if not isinstance(run, dict):
-                continue
-            status = str(run.get("status") or "").strip().lower()
-            if status not in {"reserved", "started"}:
-                continue
-            try:
-                used_day_indices.add(max(1, int(run.get("day_index") or 1)))
-            except Exception:
-                continue
-        next_day_index = int(state.get("next_day_index") or 1)
-        while next_day_index in used_day_indices:
-            next_day_index += 1
-        child_id = child_session_id(parent_session_id, next_day_index)
+        day_index = max(1, _safe_int(state.get("next_day_index"), 1))
         now = utc_now_iso()
-        time_context = build_rokid_time_context(metadata)
+        offsets = next_single_session_upload_offsets(session_dir)
         run = {
             "run_id": normalized_run_id,
-            "day_index": next_day_index,
-            "day_label": normalize_day_label(next_day_index),
-            "parent_session_id": parent_session_id,
-            "child_session_id": child_id,
-            "status": "reserved",
+            "session_id": session_id,
+            "day_index": day_index,
+            "day_label": normalize_day_label(day_index),
+            "weekday_label": weekday_label_for_day(day_index),
+            "weekday_label_en": weekday_label_en_for_day(day_index),
+            "display_day_label": display_day_label_for_day(day_index),
+            "status": "started",
             "input_mode": input_mode,
-            **time_context,
+            "start_relative_ts_ms": offsets["relative_ts_base_ms"],
+            "next_frame_index": offsets["next_frame_index"],
+            "next_audio_index": offsets["next_audio_index"],
             "created_at": now,
             "updated_at": now,
+            **build_rokid_time_context(metadata),
         }
+        if metadata:
+            for key in ("source", "device_type", "device_id", "owner_id"):
+                if metadata.get(key) is not None:
+                    run[key] = metadata[key]
         runs[normalized_run_id] = run
-        save_day_state(parent_dir, state)
+        state["next_day_index"] = day_index + 1
+        save_single_session_day_state(session_dir, state)
         return copy.deepcopy(run), state
 
 
-def mark_rokid_day_started(
-    *,
-    sessions_root: Path,
-    parent_session_id: str,
-    run_id: str,
-    response: dict[str, Any],
-) -> dict[str, Any]:
-    parent_dir = sessions_root / parent_session_id
-    stream_dir = parent_dir / "stream"
-    stream_dir.mkdir(parents=True, exist_ok=True)
-    normalized_run_id = normalize_run_id(run_id)
-    lock = FileLock(str(stream_dir / "day_state.lock"), timeout=30)
-    with lock:
-        state = load_day_state(parent_dir, parent_session_id)
-        run = state.setdefault("runs", {}).get(normalized_run_id)
-        if not isinstance(run, dict):
-            raise ValueError(f"run_id not reserved: {normalized_run_id}")
-        day_index = int(run.get("day_index") or 1)
-        run["status"] = "started"
-        run["started_at"] = run.get("started_at") or utc_now_iso()
-        run["updated_at"] = utc_now_iso()
-        run["start_response"] = copy.deepcopy(response)
-        state["next_day_index"] = max(int(state.get("next_day_index") or 1), day_index + 1)
-        save_day_state(parent_dir, state)
-        return copy.deepcopy(run)
-
-
-def mark_rokid_day_failed(
-    *,
-    sessions_root: Path,
-    parent_session_id: str,
-    run_id: str,
-    error: str,
-) -> None:
-    parent_dir = sessions_root / parent_session_id
-    stream_dir = parent_dir / "stream"
-    stream_dir.mkdir(parents=True, exist_ok=True)
-    normalized_run_id = normalize_run_id(run_id)
-    lock = FileLock(str(stream_dir / "day_state.lock"), timeout=30)
-    with lock:
-        state = load_day_state(parent_dir, parent_session_id)
-        run = state.setdefault("runs", {}).get(normalized_run_id)
-        if isinstance(run, dict) and str(run.get("status") or "") == "reserved":
-            run["status"] = "failed"
-            run["error"] = str(error)
-            run["updated_at"] = utc_now_iso()
-            state["runs"].pop(normalized_run_id, None)
-            save_day_state(parent_dir, state)
-
-
-def day_context_for_run(run: dict[str, Any]) -> dict[str, Any]:
-    context = {
-        "day_label": str(run.get("day_label") or normalize_day_label(run.get("day_index"))),
-        "day_index": int(run.get("day_index") or 1),
-        "run_id": str(run.get("run_id") or ""),
-    }
-    for key in (
-        "start_datetime",
-        "display_date",
-        "display_time",
-        "display_datetime",
-        "display_iso",
-        "display_hhmmssff",
-        "timezone",
-        "time_source",
-        "client_session_start_ts_ms",
-        "client_timezone_offset_minutes",
-    ):
-        if run.get(key) is not None:
-            context[key] = run.get(key)
-    return context
-
-
-def enrich_start_response_for_day(response: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
+def enrich_start_response_for_single_session_day(response: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
     content = copy.deepcopy(response)
-    parent_session_id = str(run.get("parent_session_id") or "")
-    child_id = str(run.get("child_session_id") or content.get("session_id") or "")
-    content["session_id"] = child_id
-    content["parent_session_id"] = parent_session_id
-    content["child_session_id"] = child_id
-    content["day_context"] = day_context_for_run(run)
+    content.update(
+        {
+            "session_id": str(run.get("session_id") or content.get("session_id") or ""),
+            "day_context": day_context_for_single_session_run(run),
+            "next_frame_index": max(0, _safe_int(run.get("next_frame_index"), 0)),
+            "next_audio_index": max(0, _safe_int(run.get("next_audio_index"), 0)),
+            "relative_ts_base_ms": max(0, _safe_int(run.get("start_relative_ts_ms"), 0)),
+            "rokid_session_mode": "single_session",
+        }
+    )
     return content
 
 
-def child_metadata_patch(run: dict[str, Any]) -> dict[str, Any]:
-    day_context = day_context_for_run(run)
-    parent_session_id = str(run.get("parent_session_id") or "")
-    child_id = str(run.get("child_session_id") or "")
+def single_session_metadata_patch(run: dict[str, Any]) -> dict[str, Any]:
+    context = day_context_for_single_session_run(run)
     return {
-        "parent_session_id": parent_session_id,
-        "child_session_id": child_id,
-        "is_rokid_day_child": True,
-        "day_label": day_context["day_label"],
-        "day_index": day_context["day_index"],
-        "run_id": day_context["run_id"],
-        **{key: value for key, value in day_context.items() if key not in {"day_label", "day_index", "run_id"}},
+        "rokid_session_mode": "single_session",
+        "day_context": context,
+        "day_label": context["day_label"],
+        "day_index": context["day_index"],
+        "weekday_label": context["weekday_label"],
+        "weekday_label_en": context["weekday_label_en"],
+        "display_day_label": context["display_day_label"],
+        "run_id": context["run_id"],
+        "relative_ts_base_ms": context["relative_ts_base_ms"],
     }
 
 
-def update_child_metadata(session_dir: Path, run: dict[str, Any]) -> None:
-    path = session_dir / "metadata.json"
+def update_single_session_metadata(session_dir: Path, run: dict[str, Any]) -> None:
+    path = Path(session_dir) / "metadata.json"
     payload = read_json(path, default={})
     if not isinstance(payload, dict):
-        payload = {}
-    patch = child_metadata_patch(run)
+        payload = {"session_id": Path(session_dir).name}
+    patch = single_session_metadata_patch(run)
     payload.update(patch)
-    metadata = payload.get("metadata")
-    if not isinstance(metadata, dict):
-        metadata = {}
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     metadata.update(patch)
     payload["metadata"] = metadata
     write_json_atomic(path, payload)
 
 
-def cleanup_failed_child_reservation(sessions_root: Path, child_session_id: str) -> None:
-    """Remove an empty failed DAY child so the DAY number can be reclaimed."""
-
-    child_dir = sessions_root / child_session_id
-    if not child_dir.exists() or not child_dir.is_dir():
-        return
-    metadata = load_rokid_day_child_metadata(child_dir)
-    if metadata is None:
-        return
-    try:
-        shutil.rmtree(child_dir)
-    except Exception:
-        return
-
-
-def load_rokid_day_child_metadata(session_dir: Path) -> dict[str, Any] | None:
-    payload = read_json(session_dir / "metadata.json", default={})
+def load_single_session_day_context(session_dir: Path) -> dict[str, Any] | None:
+    run = current_single_session_day_run(session_dir)
+    if run:
+        return day_context_for_single_session_run(run)
+    payload = read_json(Path(session_dir) / "metadata.json", default={})
     if not isinstance(payload, dict):
         return None
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-    merged = {**metadata, **payload}
-    if not merged.get("is_rokid_day_child"):
-        return None
-    parent_session_id = str(merged.get("parent_session_id") or "").strip()
-    child_id = str(merged.get("child_session_id") or payload.get("session_id") or session_dir.name).strip()
-    if not parent_session_id:
-        return None
-    try:
-        day_index = int(merged.get("day_index") or 1)
-    except Exception:
-        day_index = 1
-    return {
-        "parent_session_id": parent_session_id,
-        "child_session_id": child_id,
-        "day_label": str(merged.get("day_label") or normalize_day_label(day_index)),
-        "day_index": day_index,
-        "run_id": str(merged.get("run_id") or ""),
-        **{
-            key: merged.get(key)
-            for key in (
-                "start_datetime",
-                "display_date",
-                "display_time",
-                "display_datetime",
-                "display_iso",
-                "display_hhmmssff",
-                "timezone",
-                "time_source",
-                "client_session_start_ts_ms",
-                "client_timezone_offset_minutes",
-            )
-            if merged.get(key) is not None
-        },
-    }
+    context = {**metadata, **payload}.get("day_context")
+    if isinstance(context, dict) and context.get("mode") == "single_session":
+        return dict(context)
+    return None
+
+
+def day_context_for_relative_time(session_dir: Path, relative_seconds: float) -> dict[str, Any] | None:
+    state = load_single_session_day_state(session_dir)
+    runs = [run for run in state.get("runs", {}).values() if isinstance(run, dict)]
+    if not runs:
+        return load_single_session_day_context(session_dir)
+    relative_ms = max(0, int(round(float(relative_seconds or 0.0) * 1000.0)))
+    runs.sort(key=lambda item: _safe_int(item.get("start_relative_ts_ms"), 0))
+    selected = runs[0]
+    for run in runs:
+        if relative_ms < _safe_int(run.get("start_relative_ts_ms"), 0):
+            break
+        selected = run
+    return day_context_for_single_session_run(selected)
+
+
+def apply_demo_day_fields(
+    item: dict[str, Any],
+    *,
+    session_dir: Path,
+    start_seconds: Any,
+    end_seconds: Any | None = None,
+) -> dict[str, Any]:
+    context = day_context_for_relative_time(session_dir, _safe_float(start_seconds, 0.0))
+    if not context:
+        return item
+    item.update(
+        {
+            "date": context["day_label"],
+            "day_label": context["day_label"],
+            "weekday_label": context["weekday_label"],
+            "weekday_label_en": context["weekday_label_en"],
+            "display_day_label": context["display_day_label"],
+            "relative_day_start_ms": context["relative_ts_base_ms"],
+        }
+    )
+    base_seconds = context["relative_ts_base_ms"] / 1000.0
+    local_start = max(0.0, _safe_float(start_seconds, 0.0) - base_seconds)
+    local_end = max(local_start, _safe_float(end_seconds if end_seconds is not None else start_seconds, local_start) - base_seconds)
+    item["local_start_time"] = round(local_start, 3)
+    item["local_end_time"] = round(local_end, 3)
+    return item
 
 
 def query_memory_ready(session_dir: Path) -> bool:
-    config = read_json(session_dir / "em2mem" / "memory_config.json", default={})
+    config = read_json(Path(session_dir) / "em2mem" / "memory_config.json", default={})
     if not isinstance(config, dict):
         return False
     return bool(
@@ -446,95 +458,49 @@ def resolve_query_long_term_candidates(
     question: str = "",
     query_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    del question
     context = dict(query_context or resolve_query_session_context(session_id, sessions_root))
-    sessions_root = Path(sessions_root)
-    preferred_id = str(context.get("long_term_session_id") or session_id)
-    parent_id = str(context.get("parent_session_id") or preferred_id)
-    child_id = str(context.get("child_session_id") or session_id)
-    is_day_child = bool(context.get("is_rokid_day_child"))
-
-    def candidate(session: str, role: str, reason: str) -> dict[str, Any]:
-        session_dir = sessions_root / session
-        return {
-            "session_id": session,
-            "role": role,
-            "ready": query_memory_ready(session_dir),
-            "memory_config_exists": (session_dir / "em2mem" / "memory_config.json").exists(),
-            "reason": reason,
-        }
-
-    ordered: list[dict[str, Any]] = []
-    if is_day_child:
-        ordered.append(candidate(parent_id, "parent", "preferred cross-day parent memory"))
-        ordered.append(candidate(child_id, "current_child", "current day child fallback"))
-    else:
-        ordered.append(candidate(preferred_id, "session", "single-session long-term memory"))
-
-    unique: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for item in ordered:
-        sid = str(item.get("session_id") or "")
-        if not sid or sid in seen:
-            continue
-        seen.add(sid)
-        unique.append(item)
-
-    selected = next((item for item in unique if item.get("ready")), unique[0] if unique else candidate(preferred_id, "session", "fallback"))
+    selected_session_id = str(context.get("long_term_session_id") or session_id)
+    session_dir = Path(sessions_root) / selected_session_id
+    candidate = {
+        "session_id": selected_session_id,
+        "role": "session",
+        "ready": query_memory_ready(session_dir),
+        "memory_config_exists": (session_dir / "em2mem" / "memory_config.json").exists(),
+        "reason": "single-session long-term memory",
+    }
     return {
-        "preferred_session_id": preferred_id,
-        "selected_session_id": selected.get("session_id"),
-        "selected_role": selected.get("role"),
-        "selected_reason": selected.get("reason"),
-        "target_day_index": None,
-        "target_child_session_id": None,
-        "candidates": unique,
+        "preferred_session_id": selected_session_id,
+        "selected_session_id": selected_session_id,
+        "selected_role": "session",
+        "selected_reason": candidate["reason"],
+        "candidates": [candidate],
     }
 
 
 def resolve_query_session_context(session_id: str, sessions_root: Path) -> dict[str, Any]:
-    session_dir = sessions_root / session_id
-    child_meta = load_rokid_day_child_metadata(session_dir)
-    if child_meta:
-        parent_session_id = child_meta["parent_session_id"]
-        return {
-            "session_id": session_id,
-            "is_rokid_day_child": True,
-            "realtime_session_id": session_id,
-            "short_term_session_id": session_id,
-            "long_term_session_id": parent_session_id,
-            "interaction_cache_session_id": session_id,
-            "parent_session_id": parent_session_id,
-            "child_session_id": child_meta["child_session_id"],
-            "day_label": child_meta["day_label"],
-            "day_index": child_meta["day_index"],
-            "run_id": child_meta["run_id"],
-            **{
-                key: child_meta.get(key)
-                for key in (
-                    "start_datetime",
-                    "display_date",
-                    "display_time",
-                    "display_datetime",
-                    "display_iso",
-                    "display_hhmmssff",
-                    "timezone",
-                    "time_source",
-                    "client_session_start_ts_ms",
-                    "client_timezone_offset_minutes",
-                )
-                if child_meta.get(key) is not None
-            },
-        }
-    return {
+    context = load_single_session_day_context(Path(sessions_root) / session_id)
+    result: dict[str, Any] = {
         "session_id": session_id,
-        "is_rokid_day_child": False,
         "realtime_session_id": session_id,
         "short_term_session_id": session_id,
         "long_term_session_id": session_id,
         "interaction_cache_session_id": session_id,
-        "parent_session_id": session_id,
-        "child_session_id": session_id,
-        "day_label": None,
-        "day_index": None,
-        "run_id": "",
+        "is_rokid_demo_day": bool(context),
+        "day_context": context,
     }
+    if context:
+        result.update(context)
+    else:
+        result.update(
+            {
+                "day_label": None,
+                "day_index": None,
+                "weekday_label": None,
+                "weekday_label_en": None,
+                "display_day_label": None,
+                "run_id": "",
+                "relative_ts_base_ms": None,
+            }
+        )
+    return result

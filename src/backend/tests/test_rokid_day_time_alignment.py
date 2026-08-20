@@ -4,29 +4,28 @@ import types
 from pathlib import Path
 
 
+def _write_json(path: Path, data: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
 def _install_lightweight_import_stubs() -> None:
     online_preprocess = sys.modules.get("online_preprocess") or types.ModuleType("online_preprocess")
     online_preprocess.__path__ = []
     io_utils = sys.modules.get("online_preprocess.io_utils") or types.ModuleType("online_preprocess.io_utils")
     io_utils.read_json = lambda path, default=None: json.loads(Path(path).read_text(encoding="utf-8")) if Path(path).exists() else default
     io_utils.utc_now_iso = lambda: "2026-07-08T00:00:00+00:00"
-    io_utils.write_json = lambda path, data: _write_json(Path(path), data)
     io_utils.write_json_atomic = lambda path, data: _write_json(Path(path), data)
     sys.modules["online_preprocess"] = online_preprocess
     sys.modules["online_preprocess.io_utils"] = io_utils
 
 
-def _write_json(path: Path, data: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data), encoding="utf-8")
-
-
 _install_lightweight_import_stubs()
 
 from online_pipeline.rokid_day import (  # noqa: E402
+    apply_demo_day_fields,
     build_rokid_time_context,
-    child_metadata_patch,
-    load_rokid_day_child_metadata,
+    reserve_single_session_day_run,
     resolve_query_session_context,
     rokid_display_payload_for_relative_time,
 )
@@ -40,50 +39,88 @@ def test_client_device_time_context_and_relative_display_time() -> None:
             "client_timezone_offset_minutes": 480,
         }
     )
-
-    assert context["start_datetime"] == "2026-07-08 10:03:12"
     assert context["display_date"] == "2026年7月8日"
     assert context["display_time"] == "10:03:12"
     assert context["timezone"] == "Asia/Shanghai"
-    assert context["time_source"] == "client_device"
-
-    display = rokid_display_payload_for_relative_time(context, 78.4)
-
-    assert display["display_datetime"] == "2026-07-08 10:04:30"
-    assert display["display_hhmmssff"] == "10043040"
+    assert rokid_display_payload_for_relative_time(context, 78.4)["display_hhmmssff"] == "10043040"
 
 
-def test_child_metadata_and_query_context_include_time_fields(tmp_path: Path) -> None:
-    run = {
-        "parent_session_id": "parent1",
-        "child_session_id": "parent1__day0002",
-        "day_label": "DAY2",
-        "day_index": 2,
-        "run_id": "run-2",
-        **build_rokid_time_context(
-            {
-                "client_start_datetime": "2026-07-08 10:03:12",
-                "client_timezone_id": "Asia/Shanghai",
-            }
-        ),
-    }
-    child_dir = tmp_path / "parent1__day0002"
-    _write_json(child_dir / "metadata.json", {"session_id": "parent1__day0002", **child_metadata_patch(run)})
+def test_single_session_day_runs_increment_and_preserve_offsets(tmp_path: Path) -> None:
+    session_dir = tmp_path / "session1"
+    session_dir.mkdir()
+    run1, _ = reserve_single_session_day_run(
+        session_dir=session_dir,
+        session_id="session1",
+        run_id="run-1",
+        input_mode="rokid_frame_audio",
+        metadata={"device_type": "rokid"},
+    )
+    _write_json(session_dir / "stream" / "frame_state.json", {"latest_frame_index": 41, "latest_relative_ts_ms": 90_000})
+    _write_json(session_dir / "stream" / "audio_state.json", {"latest_audio_index": 76, "latest_relative_ts_ms": 88_000})
+    run2, _ = reserve_single_session_day_run(
+        session_dir=session_dir,
+        session_id="session1",
+        run_id="run-2",
+        input_mode="rokid_frame_audio",
+        metadata={"device_type": "rokid"},
+    )
 
-    metadata = load_rokid_day_child_metadata(child_dir)
-    query_context = resolve_query_session_context("parent1__day0002", tmp_path)
-
-    assert metadata is not None
-    assert metadata["display_date"] == "2026年7月8日"
-    assert query_context["is_rokid_day_child"] is True
-    assert query_context["long_term_session_id"] == "parent1"
-    assert query_context["display_datetime"] == "2026-07-08 10:03:12"
-    assert query_context["timezone"] == "Asia/Shanghai"
+    assert run1["display_day_label"] == "DAY1 周一"
+    assert run1["next_frame_index"] == 0
+    assert run2["display_day_label"] == "DAY2 周二"
+    assert run2["next_frame_index"] == 42
+    assert run2["next_audio_index"] == 77
+    assert run2["start_relative_ts_ms"] == 90_001
+    assert not (tmp_path / "session1__day0002").exists()
 
 
-def test_missing_client_time_falls_back_to_server_receive_time() -> None:
-    context = build_rokid_time_context({})
+def test_run_reservation_is_idempotent_and_query_stays_in_one_session(tmp_path: Path) -> None:
+    session_dir = tmp_path / "session1"
+    session_dir.mkdir()
+    first, _ = reserve_single_session_day_run(
+        session_dir=session_dir,
+        session_id="session1",
+        run_id="same-run",
+        input_mode="rokid_frame_audio",
+        metadata={},
+    )
+    repeated, state = reserve_single_session_day_run(
+        session_dir=session_dir,
+        session_id="session1",
+        run_id="same-run",
+        input_mode="rokid_frame_audio",
+        metadata={},
+    )
+    context = resolve_query_session_context("session1", tmp_path)
 
-    assert context["time_source"] == "server_receive_fallback"
-    assert context["start_datetime"] == "2026-07-08 00:00:00"
-    assert context["timezone"] == "UTC"
+    assert repeated == first
+    assert state["next_day_index"] == 2
+    assert context["long_term_session_id"] == "session1"
+    assert context["day_context"]["mode"] == "single_session"
+    assert "parent_session_id" not in context
+    assert "child_session_id" not in context
+
+
+def test_memory_item_uses_day_for_its_relative_time(tmp_path: Path) -> None:
+    session_dir = tmp_path / "session1"
+    session_dir.mkdir()
+    reserve_single_session_day_run(
+        session_dir=session_dir,
+        session_id="session1",
+        run_id="run-1",
+        input_mode="rokid_frame_audio",
+        metadata={},
+    )
+    _write_json(session_dir / "stream" / "frame_state.json", {"latest_frame_index": 10, "latest_relative_ts_ms": 60_000})
+    reserve_single_session_day_run(
+        session_dir=session_dir,
+        session_id="session1",
+        run_id="run-2",
+        input_mode="rokid_frame_audio",
+        metadata={},
+    )
+    item = {"start_time": 61.0, "end_time": 70.0}
+    apply_demo_day_fields(item, session_dir=session_dir, start_seconds=61.0, end_seconds=70.0)
+    assert item["date"] == "DAY2"
+    assert item["display_day_label"] == "DAY2 周二"
+    assert item["local_start_time"] == 0.999

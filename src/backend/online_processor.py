@@ -28,12 +28,24 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _preprocess_asr_backend() -> str:
-    return (os.getenv("EM2MEM_PREPROCESS_ASR_BACKEND") or os.getenv("EM2MEM_ASR_BACKEND") or "xfyun").strip().lower()
+def _normalize_asr_backend(value: str | None, default: str = "xfyun") -> str:
+    backend = (value or default).strip().lower()
+    return "xfyun" if backend == "iflytek" else backend
+
+
+def _preprocess_asr_backend(override: str | None = None) -> str:
+    return _normalize_asr_backend(
+        override
+        or os.getenv("EM2MEM_PREPROCESS_ASR_BACKEND")
+        or os.getenv("EM2MEM_AUDIO_ASR_BACKEND")
+        or os.getenv("EM2MEM_STREAM_ASR_BACKEND")
+        or os.getenv("EM2MEM_ASR_BACKEND"),
+        "xfyun",
+    )
 
 
 def _xfyun_fallback_to_whisperx() -> bool:
-    return _env_bool("EM2MEM_XFYUN_FALLBACK_WHISPERX", True)
+    return _env_bool("EM2MEM_XFYUN_FALLBACK_WHISPERX", False)
 
 
 def process_session(
@@ -48,6 +60,7 @@ def process_session(
     skip_asr: bool,
     force: bool,
     asr_runtime: WhisperXRuntime | None = None,
+    asr_backend: str | None = None,
 ) -> Path:
     session_dir = sessions_root / session_id
     input_video = session_dir / "input.mp4"
@@ -95,7 +108,7 @@ def process_session(
                     output_srt=transcript_srt_path,
                     output_json=transcript_json_path,
                 )
-            backend = _preprocess_asr_backend()
+            backend = _preprocess_asr_backend(asr_backend)
             if backend in {"xfyun", "iflytek"}:
                 try:
                     return transcribe_audio_with_xfyun(
@@ -106,7 +119,7 @@ def process_session(
                     )
                 except Exception as exc:
                     if not _xfyun_fallback_to_whisperx():
-                        raise
+                        raise OnlinePreprocessError(f"XFYun ASR failed: {exc}") from exc
                     print(f"[preprocess_asr] xfyun failed; falling back to whisperx: {exc}", flush=True)
                     backend = "whisperx"
             if backend == "whisperx":
@@ -203,6 +216,7 @@ def main() -> None:
         skip_asr=args.skip_asr,
         force=args.force,
         asr_runtime=None,
+        asr_backend=_preprocess_asr_backend(),
     )
     print(f"Preprocess complete: {preprocess_dir}")
 

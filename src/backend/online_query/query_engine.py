@@ -30,6 +30,7 @@ from online_query.memory_plan import RetrievalPlanner
 from online_query.memory_router import MemoryRouter
 from online_query.query_router import QueryRouter
 from online_query.day_prompt_context import build_day_context_block
+from online_query.evidence_sufficiency import EvidenceSufficiencyEvaluator, apply_recent_recall_decision
 from online_short_term.mst_retriever import MSTRetriever
 from online_short_term.mst_store import MSTStore
 from online_query.stream_query_context import load_stream_query_context
@@ -38,7 +39,6 @@ from online_pipeline.rokid_day import (
     query_memory_ready,
     resolve_query_long_term_candidates,
     resolve_query_session_context,
-    rokid_display_payload_for_relative_time,
 )
 from online_visual.visual_index import VisualSearchIndex, load_visual_index
 from online_visual.visual_items import read_visual_items
@@ -438,6 +438,72 @@ def _llm_stream_with_retries(
     raise RuntimeError("; ".join(errors) or "LLM generation failed")
 
 
+def _make_timed_chunk_handler(
+    stream_handler: Any,
+    stage: str = "answer",
+) -> tuple[Any, dict[str, Any]]:
+    timing: dict[str, Any] = {
+        "stream_first_token_ms": None,
+        "stream_first_token_at": None,
+        "stream_chunk_count": 0,
+        "stream_text_chars": 0,
+    }
+    started_at = time.perf_counter()
+
+    def _on_chunk(text: Any) -> None:
+        chunk = str(text or "")
+        if not chunk:
+            return
+        timing["stream_chunk_count"] = int(timing.get("stream_chunk_count") or 0) + 1
+        timing["stream_text_chars"] = int(timing.get("stream_text_chars") or 0) + len(chunk)
+        elapsed_ms = _ms(started_at)
+        event = {
+            "type": "delta",
+            "stage": stage,
+            "delta": chunk,
+            "server_generation_elapsed_ms": elapsed_ms,
+        }
+        if timing.get("stream_first_token_ms") is None:
+            timing["stream_first_token_ms"] = elapsed_ms
+            timing["stream_first_token_at"] = _eval_utc_now_iso()
+            event["first_token"] = True
+        _emit_stream_event(stream_handler, event)
+
+    return _on_chunk, timing
+
+
+def _extract_stream_timing(debug: Any) -> dict[str, Any]:
+    if not isinstance(debug, dict):
+        return {}
+    candidates: list[Any] = [debug.get("stream_timing")]
+    for key in (
+        "primary_generation",
+        "fallback_text_only_debug",
+        "text_only_fallback_debug",
+        "llm_debug",
+        "last_debug",
+    ):
+        nested = debug.get(key)
+        if isinstance(nested, dict):
+            candidates.append(nested.get("stream_timing"))
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate.get("stream_first_token_ms") is not None:
+            return candidate
+    return {}
+
+
+def _attach_stream_latency(latency: dict[str, Any], *debug_values: Any) -> None:
+    for value in debug_values:
+        timing = _extract_stream_timing(value)
+        if not timing:
+            continue
+        latency["stream_model_first_token_ms"] = timing.get("stream_first_token_ms")
+        latency["stream_model_first_token_at"] = timing.get("stream_first_token_at")
+        latency["stream_chunk_count"] = timing.get("stream_chunk_count")
+        latency["stream_text_chars"] = timing.get("stream_text_chars")
+        return
+
+
 def _emit_stream_event(stream_handler: Any, event: dict[str, Any]) -> None:
     if not callable(stream_handler):
         return
@@ -758,9 +824,11 @@ def _apply_image_fallback_to_route(route_decision: dict[str, Any], diagnostics: 
         return
     route_decision["use_image_evidence"] = True
     route_decision["use_image_evidence_source"] = "auto_partial_memory_fallback"
-    route_decision["max_image_evidence"] = max(
-        int(route_decision.get("max_image_evidence") or 0),
-        _env_int("EM2MEM_PARTIAL_MEMORY_IMAGE_FALLBACK_MAX_IMAGES", 4),
+    requested_max_images = max(0, int(route_decision.get("max_image_evidence") or 0))
+    fallback_max_images = max(0, _env_int("EM2MEM_PARTIAL_MEMORY_IMAGE_FALLBACK_MAX_IMAGES", 4))
+    route_decision["max_image_evidence"] = min(
+        max(requested_max_images, 1 if fallback_max_images > 0 else 0),
+        1,
     )
     route_decision["evidence_frames_k"] = max(
         int(route_decision.get("evidence_frames_k") or 0),
@@ -1165,6 +1233,14 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _seconds_to_hhmmssff(seconds: float, fps_for_code: int = 100) -> str:
+    total_frames = max(0, int(round(float(seconds or 0.0) * fps_for_code)))
+    total_seconds, frames = divmod(total_frames, fps_for_code)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}{minutes:02d}{secs:02d}{frames:02d}"
+
+
 def _latest_rokid_relative_seconds(session_dir: Path) -> float:
     candidates: list[float] = []
     for rel_path, keys in (
@@ -1187,18 +1263,23 @@ def _latest_rokid_relative_seconds(session_dir: Path) -> float:
 
 
 def _rokid_query_time_override(day_context: dict[str, Any] | None, runtime_session_dir: Path) -> dict[str, Any] | None:
-    if not isinstance(day_context, dict) or not day_context.get("is_rokid_day_child"):
+    if not isinstance(day_context, dict):
         return None
     day_label = str(day_context.get("day_label") or "").strip()
     if not day_label:
         return None
+    display_day_label = str(day_context.get("display_day_label") or day_label).strip()
     relative_seconds = _latest_rokid_relative_seconds(runtime_session_dir)
-    display = rokid_display_payload_for_relative_time(day_context, relative_seconds)
+    relative_base_seconds = max(0.0, _safe_float(day_context.get("relative_ts_base_ms"), 0.0) / 1000.0)
+    local_seconds = max(0.0, relative_seconds - relative_base_seconds)
     return {
         "until_date": day_label,
-        "until_time": display["display_hhmmssff"],
+        "until_time": _seconds_to_hhmmssff(local_seconds),
         "relative_seconds": round(relative_seconds, 3),
-        **display,
+        "local_day_seconds": round(local_seconds, 3),
+        "day_label": day_context.get("day_label"),
+        "weekday_label": day_context.get("weekday_label"),
+        "display_day_label": display_day_label,
     }
 
 
@@ -1639,6 +1720,10 @@ class LoadedQueryEngine:
         eval_trace: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         _eval_mark(eval_trace, "retrieval_started_at")
+        explicit_long_term_request = bool(
+            use_long_term is not None
+            or str(retrieval_mode or "auto").strip().lower() in {"text_only", "visual_only", "hybrid"}
+        )
         cache_mode = str(cache_mode or "auto").strip().lower()
         if cache_mode not in {"auto", "off", "read_only", "write_only"}:
             cache_mode = "auto"
@@ -1807,6 +1892,25 @@ class LoadedQueryEngine:
         short_term_start = time.perf_counter()
         short_term_results = self._retrieve_short_term(resolved_question, route_decision, cache_context)
         short_term_retrieval_ms = _ms(short_term_start)
+        sufficiency_start = time.perf_counter()
+        if _env_bool("EM2MEM_RECENT_ST_PROGRESSIVE_ENABLED", True):
+            recent_sufficiency = EvidenceSufficiencyEvaluator().evaluate(
+                question=resolved_question,
+                query_type=str(route_decision.get("query_type") or ""),
+                short_term_results=short_term_results,
+                current_results=current_results,
+                explicit_long_term_override=explicit_long_term_request,
+            )
+        else:
+            recent_sufficiency = {
+                "enabled": False,
+                "evaluated": False,
+                "sufficient": False,
+                "decision": "escalate_lt",
+                "reason": "progressive_retrieval_disabled",
+            }
+        sufficiency_ms = _ms(sufficiency_start)
+        apply_recent_recall_decision(route_decision, retrieval_plan, recent_sufficiency)
         partial_diag = _diagnose_partial_memory(
             question=question,
             route_decision=route_decision,
@@ -1887,6 +1991,7 @@ class LoadedQueryEngine:
                 "memory_router_ms": memory_router_ms,
                 "retrieval_planner_ms": retrieval_planner_ms,
                 "short_term_retrieval_ms": short_term_retrieval_ms,
+                "recent_recall_sufficiency_ms": sufficiency_ms,
                 "text_retrieval_ms": 0,
                 "visual_retrieval_ms": 0,
                 "fusion_ms": 0,
@@ -1897,6 +2002,7 @@ class LoadedQueryEngine:
                 "image_evidence_enabled": bool(use_image_evidence),
                 "image_blocks_count": image_count,
             })
+            _attach_stream_latency(latency, getattr(final_raw_qa, "llm_debug", None))
             result = {
                 "status": "ok",
                 "session_id": self.session_id,
@@ -1910,6 +2016,7 @@ class LoadedQueryEngine:
                 "memory_route": memory_route,
                 "retrieval_plan": retrieval_plan.get("retrieval_plan", {}),
                 "route_decision": route_decision,
+                "recent_recall_sufficiency": recent_sufficiency,
                 "retrieval_mode": retrieval_mode,
                 "retrieval_mode_source": route_decision.get("retrieval_mode_source"),
                 "long_term_ready": True,
@@ -1943,6 +2050,7 @@ class LoadedQueryEngine:
                     "route_decision": route_decision,
                     "retrieval_plan": retrieval_plan.get("retrieval_plan", {}),
                     "runtime_state": runtime_state,
+                    "recent_recall_sufficiency": recent_sufficiency,
                     "memory_results": memory_results,
                     "fusion_summary": fusion_result.get("fusion_summary", {}),
                     "cache_context": cache_context,
@@ -2248,6 +2356,7 @@ class LoadedQueryEngine:
         latency["long_term_pack_ms"] = long_term_pack_ms
         latency["visual_retrieval_ms"] = visual_retrieval_ms
         latency["short_term_retrieval_ms"] = short_term_retrieval_ms
+        latency["recent_recall_sufficiency_ms"] = sufficiency_ms
         latency["fusion_ms"] = fusion_ms
         latency["memory_fusion_ms"] = memory_fusion_ms
         latency["evidence_pack_ms"] = pack_ms
@@ -2256,6 +2365,7 @@ class LoadedQueryEngine:
         latency["answer_generation_ms"] = generation_ms
         latency["image_evidence_enabled"] = bool(use_image_evidence)
         latency["image_blocks_count"] = sum(final_raw_qa.visual_event_image_counts.values())
+        _attach_stream_latency(latency, final_raw_qa.llm_debug)
 
         raw_traceback = ""
         if isinstance(final_raw_qa.llm_debug, dict):
@@ -2272,6 +2382,7 @@ class LoadedQueryEngine:
             "round_history": qa_result.round_history,
             "selected_event_doc_ids": qa_result.selected_doc_ids,
             "selector_reason": qa_result.selector_reason,
+            "recent_recall_sufficiency": recent_sufficiency,
             "supporting_semantic_fact_ids": qa_result.semantic_fact_ids,
             "visual_event_image_counts": final_raw_qa.visual_event_image_counts,
             "image_evidence_enabled": final_raw_qa.image_evidence_enabled,
@@ -2299,6 +2410,7 @@ class LoadedQueryEngine:
                 "resolved_question": resolved_question,
             },
             "route_decision": route_decision,
+            "recent_recall_sufficiency": recent_sufficiency,
             "retrieval_plan": retrieval_plan.get("retrieval_plan", {}),
             "runtime_state": runtime_state,
             "memory_results": memory_results,
@@ -2343,6 +2455,7 @@ class LoadedQueryEngine:
             "memory_route": route_decision.get("memory_route", {}),
             "retrieval_plan": retrieval_plan.get("retrieval_plan", {}),
             "route_decision": route_decision,
+            "recent_recall_sufficiency": recent_sufficiency,
             "retrieval_mode": retrieval_mode,
             "retrieval_mode_source": route_decision.get("retrieval_mode_source"),
             "pipeline_mode": self.memory_config.get("pipeline_mode", os.getenv("EM2MEM_PIPELINE_MODE", "mst")),
@@ -2681,7 +2794,7 @@ class LoadedQueryEngine:
         user_content: list[dict[str, Any]] = [{"type": "text", "text": prompt_text}]
         if use_image_evidence:
             if selected_image_paths is not None:
-                image_paths_used = list(selected_image_paths)[:max_image_evidence]
+                image_paths_used = list(selected_image_paths)
             else:
                 image_paths_used, image_warnings = self._select_generation_image_paths(
                     visual_results=visual_results,
@@ -2718,15 +2831,14 @@ class LoadedQueryEngine:
         answer_attempts = _env_int("EM2MEM_QUERY_ANSWER_RETRIES", 3)
         try:
             if callable(stream_handler):
+                on_chunk, stream_timing = _make_timed_chunk_handler(stream_handler, stage="answer")
                 answer, primary_debug = _llm_stream_with_retries(
                     self.em2mem_memory.respond_llm_model,
                     messages,
                     answer_attempts,
-                    on_chunk=lambda text: _emit_stream_event(
-                        stream_handler,
-                        {"type": "delta", "stage": "answer", "delta": text},
-                    ),
+                    on_chunk=on_chunk,
                 )
+                primary_debug["stream_timing"] = stream_timing
             else:
                 answer, primary_debug = _llm_generate_with_retries(
                     self.em2mem_memory.respond_llm_model,
@@ -2743,15 +2855,14 @@ class LoadedQueryEngine:
                 fallback_used = True
                 try:
                     if callable(stream_handler):
+                        on_chunk, stream_timing = _make_timed_chunk_handler(stream_handler, stage="answer")
                         answer, fallback_debug = _llm_stream_with_retries(
                             self.em2mem_memory.respond_llm_model,
                             prompt_text,
                             answer_attempts,
-                            on_chunk=lambda text: _emit_stream_event(
-                                stream_handler,
-                                {"type": "delta", "stage": "answer", "delta": text},
-                            ),
+                            on_chunk=on_chunk,
                         )
+                        fallback_debug["stream_timing"] = stream_timing
                     else:
                         answer, fallback_debug = _llm_generate_with_retries(
                             self.em2mem_memory.respond_llm_model,
@@ -2853,120 +2964,71 @@ class LoadedQueryEngine:
     ) -> str:
         short_term_results = short_term_results or []
         selected_evidence = selected_evidence or []
-        text_evidence = []
-        for item in text_results[:5]:
-            text_evidence.append({
-                "segment_id": item.get("segment_id"),
-                "score": item.get("score"),
-                "caption": item.get("caption"),
-                "start_time": item.get("start_time"),
-                "end_time": item.get("end_time"),
-                "evidence_doc_id": item.get("evidence_doc_id"),
-            })
-        visual_evidence = []
-        seen_visual = set()
-        source_items: list[dict[str, Any]] = []
-        for fused in fused_results:
-            source_items.extend(fused.get("visual_items", []) or [])
-        source_items.extend(visual_results)
-        for item in source_items:
-            visual_id = str(item.get("visual_id") or item.get("image_path") or "")
-            if not visual_id or visual_id in seen_visual:
-                continue
-            seen_visual.add(visual_id)
-            visual_evidence.append({
-                "visual_id": item.get("visual_id"),
-                "segment_id": item.get("segment_id"),
-                "timestamp": item.get("timestamp"),
-                "image_path": item.get("image_path"),
-                "keyframe_caption": item.get("keyframe_caption"),
-                "visual_score": item.get("visual_score") or item.get("score"),
-                "segment_caption": item.get("segment_caption"),
-                "scene": item.get("scene"),
-                "objects": item.get("visual_objects"),
-                "actions": item.get("main_actions"),
-                "state_changes": item.get("state_changes"),
-            })
-            if len(visual_evidence) >= 8:
-                break
-        fused_evidence = []
-        for item in fused_results:
-            fused_evidence.append({
-                "segment_id": item.get("segment_id"),
-                "text_score": item.get("text_score"),
-                "visual_score": item.get("visual_score"),
-                "fused_score": item.get("fused_score"),
-            })
-        short_term_evidence = []
-        for item in short_term_results[:5]:
-            caption = (
-                item.get("event_caption_refined")
-                or item.get("event_caption_fast")
-                or item.get("event_caption_placeholder")
-                or ""
-            )
-            short_term_evidence.append({
-                "event_id": item.get("event_id"),
-                "score": item.get("score"),
-                "start_time": item.get("start_time"),
-                "end_time": item.get("end_time"),
-                "status": item.get("status"),
-                "caption_source": item.get("caption_source"),
-                "boundary_reason": item.get("boundary_reason"),
-                "caption": caption,
-                "event_caption_refined": item.get("event_caption_refined"),
-                "event_caption_fast": item.get("event_caption_fast"),
-                "transcript": item.get("transcript"),
-                "keyframes": [
-                    {
-                        "timestamp": frame.get("timestamp"),
-                        "path": frame.get("path"),
-                        "role": frame.get("role"),
-                    }
-                    for frame in (item.get("keyframes") or [])[:2]
-                    if isinstance(frame, dict)
-                ],
-                "note": (
-                    "This short-term event has a refined caption."
-                    if item.get("status") in {"refined", "final"}
-                    else "This short-term event is provisional and may not yet have refined caption."
-                ),
-            })
-        final_evidence = []
+        final_evidence: list[dict[str, Any]] = []
         final_prompt_limit = _env_int("EM2MEM_PROMPT_FINAL_EVIDENCE_K", 10)
         for item in selected_evidence[: max(1, final_prompt_limit)]:
             final_evidence.append({
-                "evidence_id": item.get("evidence_id"),
-                "source_memory": item.get("source_memory"),
-                "source_type": item.get("source_type"),
-                "start_time": item.get("start_time"),
-                "end_time": item.get("end_time"),
-                "timestamp": item.get("timestamp"),
-                "caption": item.get("caption"),
-                "transcript": item.get("transcript"),
-                "keyframe_paths": item.get("keyframe_paths"),
-                "final_score": item.get("final_score"),
-                "status": item.get("status"),
+                "source": item.get("source_memory"),
+                "time": [item.get("start_time"), item.get("end_time")],
+                "caption": item.get("caption") or "",
+                "transcript": item.get("transcript") or "",
+                "status": item.get("status") or "",
             })
+
+        # The fusion result is the authoritative, deduplicated evidence set. Only
+        # fall back to raw retrieval payloads if fusion returned nothing.
+        if not final_evidence:
+            for item in text_results[: max(1, final_prompt_limit)]:
+                final_evidence.append({
+                    "source": "M_lt",
+                    "time": [item.get("start_time"), item.get("end_time")],
+                    "caption": item.get("caption") or "",
+                    "transcript": item.get("transcript") or "",
+                    "status": "final",
+                })
+        if not final_evidence:
+            seen_visual: set[tuple[Any, Any, str]] = set()
+            visual_items = [
+                visual
+                for fused in fused_results
+                for visual in (fused.get("visual_items", []) or [])
+            ] + list(visual_results)
+            for item in visual_items:
+                caption = item.get("keyframe_caption") or item.get("segment_caption") or ""
+                key = (item.get("start_time"), item.get("end_time"), str(caption))
+                if not caption or key in seen_visual:
+                    continue
+                seen_visual.add(key)
+                final_evidence.append({
+                    "source": "M_lt_visual",
+                    "time": [item.get("start_time") or item.get("timestamp"), item.get("end_time") or item.get("timestamp")],
+                    "caption": caption,
+                    "transcript": "",
+                    "status": "final",
+                })
+                if len(final_evidence) >= max(1, final_prompt_limit):
+                    break
+        if not final_evidence:
+            for item in short_term_results[: max(1, final_prompt_limit)]:
+                final_evidence.append({
+                    "source": "M_st",
+                    "time": [item.get("start_time"), item.get("end_time")],
+                    "caption": (
+                        item.get("event_caption_refined")
+                        or item.get("event_caption_fast")
+                        or item.get("event_caption_placeholder")
+                        or ""
+                    ),
+                    "transcript": item.get("transcript") or "",
+                    "status": item.get("status") or "provisional",
+                })
         return (
             "You are answering a question about a first-person video session.\n"
-            "Use only the evidence below. Do not invent hidden intentions. "
-            "Some retrieved memory entries may be provisional and not fully refined; "
-            "when images are attached, use the visible frames as primary evidence and treat placeholder captions only as time-range hints. "
+            "Use only the evidence and attached frames below. Do not invent facts; if evidence is provisional or insufficient, say so briefly. "
             f"{_answer_language_instruction()}\n\n"
             f"Question: {question}\n"
-            f"Retrieval mode: {retrieval_mode}\n\n"
-            "Text evidence:\n"
-            f"{json.dumps(text_evidence, ensure_ascii=False, indent=2, default=str)}\n\n"
-            "Visual retrieval evidence:\n"
-            f"{json.dumps(visual_evidence, ensure_ascii=False, indent=2, default=str)}\n\n"
-            "Fused evidence scores:\n"
-            f"{json.dumps(fused_evidence, ensure_ascii=False, indent=2, default=str)}\n\n"
-            "Final selected evidence after memory fusion:\n"
-            f"{json.dumps(final_evidence, ensure_ascii=False, indent=2, default=str)}\n\n"
-            "Short-term provisional micro-events:\n"
-            f"{json.dumps(short_term_evidence, ensure_ascii=False, indent=2, default=str)}\n\n"
-            "Give a concise grounded answer. Mention timestamps only when useful."
+            f"Evidence: {json.dumps(final_evidence, ensure_ascii=False, separators=(',', ':'), default=str)}\n\n"
+            "Give a concise grounded answer; mention time only when useful."
         )
 
     def _select_generation_image_paths(
@@ -2978,6 +3040,7 @@ class LoadedQueryEngine:
         max_image_evidence = max(0, int(max_image_evidence or 0))
         if max_image_evidence <= 0:
             return [], []
+        per_evidence_image_limit = max(1, _env_int("EM2MEM_IMAGES_PER_EVIDENCE_LIMIT", 3))
         candidates: list[dict[str, Any]] = []
         for fused in sorted(fused_results, key=lambda x: -_safe_float(x.get("fused_score"))):
             for item in sorted(fused.get("visual_items", []) or [], key=lambda x: -_safe_float(x.get("visual_score") or x.get("score"))):
@@ -2995,7 +3058,7 @@ class LoadedQueryEngine:
             if not rel_path or rel_path in seen_paths:
                 continue
             segment_id = _canonical_segment_id(item.get("segment_id") or item.get("evidence_doc_id"))
-            if seen_segments.get(segment_id, 0) >= 2:
+            if seen_segments.get(segment_id, 0) >= per_evidence_image_limit:
                 continue
             base_dir = getattr(self, "runtime_session_dir", self.session_dir) if _image_path_runtime_scoped(rel_path) else self.session_dir
             abs_path = base_dir / rel_path
@@ -3005,8 +3068,6 @@ class LoadedQueryEngine:
             selected.append(rel_path)
             seen_paths.add(rel_path)
             seen_segments[segment_id] = seen_segments.get(segment_id, 0) + 1
-            if len(selected) >= max_image_evidence:
-                break
         return selected, warnings
 
     def _timestamps_from_visual_results(self, fused_results: list[dict[str, Any]]) -> list[dict[str, float]]:
@@ -3713,7 +3774,7 @@ def _answer_current_memory(
     if not use_image and _is_visual_event_question(question, route_decision.get("query_type")):
         use_image = True
         fallback_max_images = max(0, _env_int("EM2MEM_MCUR_VISUAL_FALLBACK_MAX_IMAGES", 3))
-        max_images = min(max(max_images, fallback_max_images), current_image_cap)
+        max_images = min(max(max_images, fallback_max_images), current_image_cap, max(0, requested_max_images))
         route_decision["use_image_evidence"] = True
         route_decision["use_image_evidence_source"] = "auto_current_visual_question"
     route_decision["max_image_evidence"] = max_images
@@ -3740,7 +3801,7 @@ def _answer_current_memory(
         cache_context=cache_context,
     )
     pack_ms = _ms(pack_start)
-    selected_image_paths = list(pack_result.get("selected_image_paths_for_mllm") or [])[:max_images]
+    selected_image_paths = list(pack_result.get("selected_image_paths_for_mllm") or [])
     if not use_image:
         selected_image_paths = []
 
@@ -3767,15 +3828,14 @@ def _answer_current_memory(
     error_debug = ""
     try:
         if callable(stream_handler):
+            on_chunk, stream_timing = _make_timed_chunk_handler(stream_handler, stage="answer")
             answer, llm_debug = _llm_stream_with_retries(
                 _get_short_term_answer_model(),
                 messages if selected_image_paths else prompt_text,
                 _env_int("EM2MEM_MCUR_ANSWER_RETRIES", 1),
-                on_chunk=lambda text: _emit_stream_event(
-                    stream_handler,
-                    {"type": "delta", "stage": "answer", "delta": text},
-                ),
+                on_chunk=on_chunk,
             )
+            llm_debug["stream_timing"] = stream_timing
         else:
             answer, llm_debug = _llm_generate_with_retries(
                 _get_short_term_answer_model(),
@@ -3790,15 +3850,14 @@ def _answer_current_memory(
         if selected_image_paths:
             try:
                 if callable(stream_handler):
+                    on_chunk, stream_timing = _make_timed_chunk_handler(stream_handler, stage="answer")
                     answer, fallback_debug = _llm_stream_with_retries(
                         _get_short_term_answer_model(),
                         prompt_text,
                         _env_int("EM2MEM_MCUR_ANSWER_RETRIES", 1),
-                        on_chunk=lambda text: _emit_stream_event(
-                            stream_handler,
-                            {"type": "delta", "stage": "answer", "delta": text},
-                        ),
+                        on_chunk=on_chunk,
                     )
+                    fallback_debug["stream_timing"] = stream_timing
                 else:
                     answer, fallback_debug = _llm_generate_with_retries(
                         _get_short_term_answer_model(),
@@ -3853,6 +3912,7 @@ def _answer_current_memory(
             "image_blocks_count": len(selected_image_paths),
         }
     )
+    _attach_stream_latency(latency, answer_debug)
     if total_start is not None:
         latency["total_ms"] = _ms(total_start)
     result = {
@@ -4148,7 +4208,7 @@ def _query_short_term_only(
             )
             if selected_image_paths:
                 user_content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-                for rel_path in selected_image_paths[: int(route_decision.get("max_image_evidence") or 4)]:
+                for rel_path in selected_image_paths:
                     if (session_dir / rel_path).exists():
                         user_content.append({"type": "image", "image": session_dir / rel_path})
                 prompt_or_messages: Any = [
@@ -4165,15 +4225,14 @@ def _query_short_term_only(
             else:
                 prompt_or_messages = prompt
             if callable(stream_handler):
+                on_chunk, stream_timing = _make_timed_chunk_handler(stream_handler, stage="answer")
                 answer, llm_debug = _llm_stream_with_retries(
                     _get_short_term_answer_model(),
                     prompt_or_messages,
                     _env_int("EM2MEM_MST_ANSWER_RETRIES", _env_int("EM2MEM_QUERY_ANSWER_RETRIES", 3)),
-                    on_chunk=lambda text: _emit_stream_event(
-                        stream_handler,
-                        {"type": "delta", "stage": "answer", "delta": text},
-                    ),
+                    on_chunk=on_chunk,
                 )
+                llm_debug["stream_timing"] = stream_timing
             else:
                 answer, llm_debug = _llm_generate_with_retries(
                     _get_short_term_answer_model(),
@@ -4186,6 +4245,7 @@ def _query_short_term_only(
             answer_debug["fallback_used"] = True
             answer_debug["error_debug"] = f"{type(exc).__name__}: {exc}"
     generation_ms = _ms(generation_start)
+    stream_timing = _extract_stream_timing(answer_debug)
     result = {
         "status": "ok",
         "session_id": session_id,
@@ -4239,6 +4299,12 @@ def _query_short_term_only(
             "evidence_pack_ms": pack_ms,
             "generation_ms": generation_ms,
             "total_ms": _ms(total_start),
+            **({
+                "stream_model_first_token_ms": stream_timing.get("stream_first_token_ms"),
+                "stream_model_first_token_at": stream_timing.get("stream_first_token_at"),
+                "stream_chunk_count": stream_timing.get("stream_chunk_count"),
+                "stream_text_chars": stream_timing.get("stream_text_chars"),
+            } if stream_timing else {}),
         },
         "raw": {
             "route_decision": route_decision,
@@ -4334,11 +4400,17 @@ def query_session(
         result = _finalize_eval_trace(result, eval_trace)
         result["session_id"] = requested_session_id
         result["query_session_context"] = query_context
-        result["day_context"] = {
+        result["day_context"] = query_context.get("day_context") or ({
+            "enabled": True,
+            "mode": "single_session",
             "day_label": query_context.get("day_label"),
             "day_index": query_context.get("day_index"),
+            "weekday_label": query_context.get("weekday_label"),
+            "weekday_label_en": query_context.get("weekday_label_en"),
+            "display_day_label": query_context.get("display_day_label"),
             "run_id": query_context.get("run_id"),
-        } if query_context.get("is_rokid_day_child") else None
+            "relative_ts_base_ms": query_context.get("relative_ts_base_ms"),
+        } if query_context.get("day_label") else None)
         result["long_term_retrieval_scheme"] = long_term_retrieval_scheme
         raw = result.setdefault("raw", {})
         raw["long_term_retrieval_scheme"] = long_term_retrieval_scheme
@@ -4417,7 +4489,7 @@ def query_session(
                 cache_hit=False,
                 cache_mode="off",
                 total_start=total_start,
-                day_context=query_context if query_context.get("is_rokid_day_child") else None,
+                day_context=query_context if query_context.get("day_label") else None,
                 stream_handler=stream_handler,
             )
             result["fast_path"] = "M_cur_direct"
@@ -4480,7 +4552,7 @@ def query_session(
                 cache_hit=False,
                 cache_mode="off",
                 total_start=total_start,
-                day_context=query_context if query_context.get("is_rokid_day_child") else None,
+                day_context=query_context if query_context.get("day_label") else None,
                 stream_handler=stream_handler,
             )
             result["short_term_only"] = False
@@ -4515,7 +4587,7 @@ def query_session(
                 debug_router=debug_router,
                 long_term_retrieval_scheme=long_term_retrieval_scheme,
                 total_start=total_start,
-                day_context=query_context if query_context.get("is_rokid_day_child") else None,
+                day_context=query_context if query_context.get("day_label") else None,
                 stream_handler=stream_handler,
             )
             result = _finalize_stream_result(result)
@@ -4543,7 +4615,7 @@ def query_session(
                 debug_router=debug_router,
                 long_term_retrieval_scheme=long_term_retrieval_scheme,
                 total_start=total_start,
-                day_context=query_context if query_context.get("is_rokid_day_child") else None,
+                day_context=query_context if query_context.get("day_label") else None,
                 stream_handler=stream_handler,
             )
             result = _mark_partial_fallback(
@@ -4647,7 +4719,7 @@ def query_session(
                 cache_hit=bool(cache_context.get("cache_hit") and cache_context.get("is_followup")),
                 cache_mode=direct_cache_mode,
                 total_start=total_start,
-                day_context=query_context if query_context.get("is_rokid_day_child") else None,
+                day_context=query_context if query_context.get("day_label") else None,
                 stream_handler=stream_handler,
             )
             cache_update = {"updated": False, "reason": "cache_mode does not allow writes"}
@@ -4743,7 +4815,7 @@ def query_session(
                     cache_hit=False,
                     cache_mode="off",
                     total_start=total_start,
-                    day_context=query_context if query_context.get("is_rokid_day_child") else None,
+                    day_context=query_context if query_context.get("day_label") else None,
                     stream_handler=stream_handler,
                 )
                 result.setdefault("warnings", []).append(f"long-term snapshot load failed; using current fallback: {exc}")
@@ -4817,7 +4889,7 @@ def query_session(
         short_term_session_id=short_term_session_id,
         interaction_cache_session_id=interaction_cache_session_id,
         requested_session_id=requested_session_id,
-        day_context=query_context if query_context.get("is_rokid_day_child") else None,
+        day_context=query_context if query_context.get("day_label") else None,
     ):
         result = engine.query(
             question=question,

@@ -1,69 +1,68 @@
 # LightMem-Ego Backend
 
-This directory contains the online backend service for LightMem-Ego. The backend receives browser or glasses streams, manages live sessions, builds current/short-term/long-term memories, retrieves evidence, and returns memory-grounded answers.
-
-The service is implemented as a FastAPI API plus a set of background workers. The runtime memory, LLM, and embedding components live under `src/em2mem/`.
+LightMem-Ego Backend is an online long-video and realtime multimodal memory QA server. It accepts uploaded videos, chunked stream fallback input, direct frame/audio realtime input, and live media ingest sources, then builds current, short-term, and long-term multimodal memories for query-time evidence retrieval and answer generation.
 
 ## Key Features
 
-- Full video upload through `/upload_video`.
-- Browser and glasses stream sessions through `/stream/start`.
-- Realtime frame input through `/stream/{session_id}/frame`.
-- Realtime audio input through `/stream/{session_id}/audio_chunk`.
-- Live ingest support for RTMP/WHIP-style deployments.
-- Current memory for ongoing scene understanding.
-- Short-term memory for recent micro-events and transcripts.
-- Long-term memory for consolidated episodic and semantic recall.
-- ASR transcript backfill for stream chunks and realtime audio windows.
-- Query workers with text, visual, current, short-term, and long-term evidence retrieval.
+- Full video upload pipeline through `/upload_video`
+- Chunk-based online stream fallback through `/stream/start` and `/stream/{session_id}/chunk`
+- Realtime frame input through `/stream/{session_id}/frame`
+- Realtime audio input through `/stream/{session_id}/audio_chunk`
+- Unified realtime ingest adapter for frame/audio events
+- Live media ingest worker for RTMP/WHIP-style deployments
+- `M_cur` current rolling memory
+- `M_st` short-term micro-event memory
+- `M_lt` incremental long-term memory
+- ASR transcript backfill for stream chunks and audio windows
+- Query workers with text, visual, current, short-term, and long-term evidence retrieval
 
 ## Architecture
 
 ```text
-Input sources
+Input Sources
   |-- full video upload
-  |-- browser frame/audio stream
-  |-- Rokid glasses frame/audio stream
+  |-- chunk fallback stream
+  |-- realtime frame/audio HTTP input
   |-- live media ingest
         |
         v
-Realtime ingest adapter
+Realtime Ingest Adapter
         |
         v
-Current memory / short-term memory / ASR
+M_cur / M_st / ASR
         |
         v
-Refinement and consolidation
+Refinement / Consolidation
         |
         v
-Long-term memory
+Long-term Memory (M_lt)
         |
         v
-Query worker
+Query Worker
         |
         v
-Answer + evidence
+Answer + Evidence
 ```
 
 ## Repository Structure
 
 - `api_server.py`: FastAPI entry point and public HTTP API.
-- `DEPLOYMENT.md`: GPU server deployment guide, including split Python environments.
+- `DEPLOYMENT.md`: GPU server deployment guide, including `.venv` and `.venv_whisperx`.
 - `online_worker.py`: preprocessing and ASR worker.
 - `online_stream_worker.py`: chunk fallback stream worker.
 - `online_live_ingest_worker.py`: live media ingest worker.
 - `online_query_worker.py`: asynchronous query worker.
 - `online_memory_worker.py`: long-term memory build and update worker.
 - `online_visual_worker.py`: visual embedding worker.
-- `online_current/`: current rolling memory.
-- `online_short_term/`: short-term micro-event memory and refinement.
+- `online_current/`: `M_cur` current memory.
+- `online_short_term/`: `M_st` micro-event memory and refinement.
 - `online_streaming/`: partial transcript and ASR backfill.
-- `online_pipeline/`: realtime ingest, live source, backpressure, and runtime state.
-- `online_preprocess/`: video segmentation, keyframe sampling, ASR, and evidence creation.
-- `online_memory/` and `online_memory_incremental/`: memory layout, incremental updates, and retrieval cache handling.
+- `online_pipeline/`: realtime ingest, live source, backpressure, runtime state.
+- `online_preprocess/`: video segmentation, keyframe sampling, ASR, evidence creation.
+- `online_memory/` and `online_memory_incremental/`: LightMem-Ego memory layout, incremental updates, HippoRAG cache handling.
 - `online_query/`: query planning, routing, retrieval, evidence packing, and answer generation.
 - `online_visual/`: visual index and VLM2Vec runtime integration.
-- `src/em2mem/`: memory, LLM, and embedding components used by the server.
+- `src/em2mem/`: runtime memory, LLM, and embedding components used by LightMem-Ego.
 - `src/HippoRAG/`: vendored runtime subset needed by long-term retrieval.
 - `scripts/`: server, worker, RTMP/SRS, and realtime input helper scripts.
 - `deploy/srs/srs.conf`: minimal SRS configuration for local live ingest experiments.
@@ -86,11 +85,14 @@ python -m pip install -e .
 cp .env.example .env
 ```
 
-Edit `.env` with model paths and API credentials. Then start the API:
+Edit `.env` with your model paths and API credentials. Then start the API:
 
 ```bash
 scripts/start_api.sh
 ```
+
+For a full GPU server deployment, including the split `.venv` / `.venv_whisperx`
+environment setup, see `DEPLOYMENT.md`.
 
 Start the default online worker set:
 
@@ -98,7 +100,40 @@ Start the default online worker set:
 scripts/start_online_all_workers.sh
 ```
 
-For full GPU server deployment, including the split `.venv` / `.venv_whisperx` environment setup, see `DEPLOYMENT.md`.
+### Local Qwen3.5-9B LLM
+
+Qwen3.5 runs in an isolated vLLM environment and exposes the same
+OpenAI-compatible API used by the workers. Model weights and the inference
+environment are ignored by Git.
+
+```bash
+scripts/setup_local_qwen35_env.sh
+scripts/download_local_qwen35_model.sh
+scripts/select_llm_profile.sh local-qwen35
+scripts/stop_server_and_workers.sh --keep-api --force
+```
+
+The local profile serves Qwen3.5 under the compatibility alias `gpt-5.4`, so
+existing memory artifacts and worker model selection continue to work. It
+uses GPU 2 by default and moves the stream ASR default to GPU 1. Verify text,
+JSON, image, and streaming requests with:
+
+```bash
+.venv/bin/python scripts/smoke_test_local_qwen35.py
+```
+
+Return to the configured remote endpoint without changing `.env`:
+
+```bash
+scripts/select_llm_profile.sh remote
+scripts/stop_server_and_workers.sh --keep-api
+```
+
+For a lighter local structure test, use mock visual embeddings:
+
+```bash
+EM2MEM_VISUAL_BACKEND=mock scripts/start_online_query_worker.sh
+```
 
 ## Environment Variables
 
@@ -189,7 +224,6 @@ scripts/start_online_visual_worker.sh
 scripts/start_online_live_ingest_worker.sh
 scripts/start_online_mst_refine_worker.sh
 scripts/start_online_mst_consolidation_worker.sh
-scripts/start_online_rokid_day_merge_worker.sh
 scripts/start_online_all_workers.sh
 ```
 
@@ -201,18 +235,18 @@ EM2MEM_MST_REFINE_WORKER_COUNT=4 scripts/start_online_all_workers.sh
 
 ## Realtime Input Modes
 
-- **HTTP frame/audio stream**: push frames and audio chunks directly to `/frame` and `/audio_chunk`.
-- **Chunk fallback stream**: upload video chunks to `/stream/{session_id}/chunk`; the stream worker materializes processing chunks and ASR tasks.
-- **Live media ingest**: create RTMP/WHIP live sources, then run `online_live_ingest_worker.py` to pull frames and audio into the realtime ingest adapter.
-- **Rokid glasses stream**: start `/stream/start` with a Rokid input mode, then upload JPEG/WebP frames and WAV/PCM audio chunks to the returned `/frame` and `/audio_chunk` URLs.
+- HTTP frame/audio stream: push frames and audio chunks directly to `/frame` and `/audio_chunk`.
+- Chunk fallback: upload video chunks to `/stream/{session_id}/chunk`; the stream worker materializes processing chunks and ASR tasks.
+- Live media ingest: create RTMP/WHIP live sources, then run `online_live_ingest_worker.py` to pull frames and audio into the same realtime ingest adapter.
+- Rokid Glass backend adapter: start `/stream/start` with `input_mode=rokid_frame_audio`, then have a phone-side Rokid Connector upload JPEG/WebP frames and WAV/PCM audio chunks to the returned `/frame` and `/audio_chunk` URLs. The backend does not call the Rokid SDK; it reuses `ingest_frame`, `ingest_audio_chunk`, `M_cur`, `M_st`, rolling ASR, and the existing query path.
 
-Timestamp rule for glasses-side realtime upload:
+Rokid Connector timestamp rule:
 
 ```text
 relative_ts_ms = Android SystemClock.elapsedRealtime() - streamStartElapsedMs
 ```
 
-For implementation details, see `docs/online_stream_api_contract.md` and `docs/stage_rokid_backend_adapter_plan.md`.
+For the first connector version, convert SDK `NV21` frames to JPEG before upload and prefer WAV 16 kHz mono audio chunks. See `docs/online_stream_api_contract.md` and `docs/stage_rokid_backend_adapter_plan.md`.
 
 ## Data And Generated Files
 
@@ -220,7 +254,7 @@ Runtime sessions, task queues, logs, generated indexes, FAISS files, pickles, mo
 
 ## Security
 
-No secrets, `.env` files, private certificates, tokens, model weights, or server-specific runtime data are included. Provide credentials through environment variables or deployment secret managers. Do not commit `.env`, runtime data, generated media, task queues, logs, or model artifacts.
+No secrets, `.env` files, private certificates, tokens, model weights, or server-specific paths are included. Provide credentials through environment variables or deployment secret managers. Do not commit `.env`, runtime data, generated media, task queues, logs, or model artifacts.
 
 ## Limitations
 
@@ -232,4 +266,4 @@ No secrets, `.env` files, private certificates, tokens, model weights, or server
 
 ## Citation And Acknowledgements
 
-If you use this code in a paper or artifact, cite the associated LightMem-Ego work when available and acknowledge the external model and retrieval components used in your deployment.
+If you use this code in a paper or artifact, cite the associated LightMem-Ego work when available and acknowledge the external model and retrieval components used in your deployment. This release does not claim any acceptance venue or benchmark result by itself.

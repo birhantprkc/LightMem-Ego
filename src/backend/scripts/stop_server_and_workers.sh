@@ -2,12 +2,12 @@
 set -euo pipefail
 
 PYTHON_WORKER_RE='(^|[[:space:]/])python([0-9.]*)?[[:space:]]+([^[:space:]]+[[:space:]]+)*online_(worker|asr_worker|stream_worker|live_ingest_worker|evidence_worker|mst_refine_worker|mst_consolidation_worker|visual_worker|memory_worker|query_worker|rokid_day_merge_worker)\.py([[:space:]]|$)'
-WORKER_WRAPPER_RE='(^|[[:space:]/])(bash|sh)[[:space:]]+([^[:space:]]+[[:space:]]+)*scripts/(start_online_worker|start_online_asr_worker|start_online_stream_worker|start_online_live_ingest_worker|start_online_evidence_worker|start_online_mst_refine_worker|start_online_mst_consolidation_worker|start_online_visual_worker|start_online_memory_worker|start_online_query_worker|start_online_rokid_day_merge_worker)\.sh([[:space:]]|$)'
+WORKER_WRAPPER_RE='(^|[[:space:]/])(bash|sh)[[:space:]]+([^[:space:]]+[[:space:]]+)*scripts/(start_online_worker|start_online_asr_worker|start_online_stream_worker|start_online_live_ingest_worker|start_online_evidence_worker|start_online_mst_refine_worker|start_online_mst_consolidation_worker|start_online_visual_worker|start_online_memory_worker|start_online_query_worker)\.sh([[:space:]]|$)'
 UVICORN_RE='(^|[[:space:]/])python([0-9.]*)?[[:space:]]+-m[[:space:]]+uvicorn[[:space:]]+api_server:app([[:space:]]|$)|(^|[[:space:]/])uvicorn[[:space:]]+api_server:app([[:space:]]|$)'
 API_WRAPPER_RE='(^|[[:space:]/])(bash|sh)[[:space:]]+([^[:space:]]+[[:space:]]+)*scripts/start_api\.sh([[:space:]]|$)'
 WORKER_PATTERN="${PYTHON_WORKER_RE}|${WORKER_WRAPPER_RE}"
 API_PATTERN="${UVICORN_RE}|${API_WRAPPER_RE}"
-PROTECTED_PATTERN='scripts/start_online_vlm2vec_embedding_server.sh|online_vlm2vec_embedding_server.py|scripts/start_online_qwen3_embedding_server.sh|online_qwen3_embedding_server.py'
+PROTECTED_PATTERN='scripts/start_online_vlm2vec_embedding_server.sh|online_vlm2vec_embedding_server.py|scripts/start_online_qwen3_embedding_server.sh|online_qwen3_embedding_server.py|scripts/start_local_qwen35_server.sh|vllm serve.*Qwen3.5-9B'
 TIMEOUT_SECONDS=8
 DRY_RUN=0
 FORCE=0
@@ -105,7 +105,7 @@ is_protected_runtime_path() {
   local path="$1"
   local base
   base="$(basename "$path")"
-  [[ "$base" == vlm2vec_embedding.pid || "$base" == vlm2vec_embedding.json || "$base" == qwen3_embedding.pid || "$base" == qwen3_embedding.json ]]
+  [[ "$base" == vlm2vec_embedding.pid || "$base" == vlm2vec_embedding.json || "$base" == qwen3_embedding.pid || "$base" == qwen3_embedding.json || "$base" == local_qwen35.pid || "$base" == local_qwen35.json ]]
 }
 
 read_json_pid() {
@@ -244,7 +244,7 @@ if [[ "$RESTART_API" == "1" ]]; then
 else
   echo "[stop_server_and_workers] Mode: restart all workers; keep the main API running"
 fi
-echo "[stop_server_and_workers] Protected HTTP services: VLM2Vec and Qwen3 embedding APIs"
+echo "[stop_server_and_workers] Protected HTTP services: VLM2Vec, Qwen3 embedding, and local Qwen3.5 APIs"
 echo "[stop_server_and_workers] Matching process command pattern:"
 echo "  ${TARGET_PATTERN}"
 echo

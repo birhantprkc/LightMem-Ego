@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import re
 from typing import Any
 
@@ -36,6 +37,13 @@ def _timestamp_from_frame_path(path: str) -> float | None:
         except Exception:
             continue
     return None
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)) or default)
+    except Exception:
+        return default
 
 
 class EvidencePacker:
@@ -79,9 +87,10 @@ class EvidencePacker:
         cache_context = cache_context or {}
         text_limit = int(route_decision.get("text_top_k") or 5)
         final_limit = int(route_decision.get("final_evidence_k") or 4)
-        frame_limit = int(route_decision.get("evidence_frames_k") or 5)
         use_image = bool(route_decision.get("use_image_evidence", False))
         max_images = int(route_decision.get("max_image_evidence") or 0)
+        per_evidence_image_limit = max(0, _env_int("EM2MEM_IMAGES_PER_EVIDENCE_LIMIT", 3))
+        total_image_limit: int | None = None
 
         text_results = list(retrieval_result.get("text_results", []) or [])[:text_limit]
         fused_results = list(retrieval_result.get("fused_results", []) or [])[:final_limit]
@@ -100,15 +109,24 @@ class EvidencePacker:
             final_evidence=final_evidence,
             cache_context=cache_context,
         )
-        selected_frames, dedup_removed = self._dedup_frames(ranked_frames, limit=frame_limit)
-        selected_images = self._select_images(selected_frames, use_image=use_image, max_images=max_images)
+        selected_frames, dedup_removed = self._dedup_frames(
+            ranked_frames,
+            limit=None,
+            per_segment_limit=max(1, per_evidence_image_limit),
+        )
+        selected_images = self._select_images(
+            selected_frames,
+            use_image=use_image,
+            per_evidence_limit=per_evidence_image_limit,
+            total_limit=total_image_limit,
+        )
         preferred_current_images = [
             str(path)
             for path in (current_selection.get("selected_image_paths_for_mllm", []) or [])
             if path
         ]
         if use_image and preferred_current_images:
-            selected_images = self._merge_preferred_images(preferred_current_images, selected_images, max_images)
+            selected_images = self._merge_preferred_images(preferred_current_images, selected_images, total_image_limit)
 
         prompt_visual = []
         seen_visual = set()
@@ -140,6 +158,8 @@ class EvidencePacker:
             "dedup_removed": dedup_removed,
             "use_image_evidence": use_image,
             "max_image_evidence": max_images,
+            "per_evidence_image_limit": per_evidence_image_limit,
+            "total_image_limit": total_image_limit,
             "final_evidence_count": len(fused_results),
             "visual_results_count": len(visual_results),
             "short_term_evidence_count": len(short_term_results[:final_limit]),
@@ -304,7 +324,12 @@ class EvidencePacker:
         frames.sort(key=lambda item: (-_safe_float(item.get("_rank_score")), _safe_float(item.get("timestamp"), 1e9)))
         return frames
 
-    def _dedup_frames(self, frames: list[dict[str, Any]], limit: int) -> tuple[list[dict[str, Any]], int]:
+    def _dedup_frames(
+        self,
+        frames: list[dict[str, Any]],
+        limit: int | None,
+        per_segment_limit: int = 2,
+    ) -> tuple[list[dict[str, Any]], int]:
         selected: list[dict[str, Any]] = []
         seen_paths: set[str] = set()
         per_segment: dict[str, int] = {}
@@ -315,7 +340,7 @@ class EvidencePacker:
                 removed += 1
                 continue
             segment = str(frame.get("canonical_segment_id") or frame.get("segment_id") or "")
-            if segment and per_segment.get(segment, 0) >= 2:
+            if segment and per_segment.get(segment, 0) >= per_segment_limit:
                 removed += 1
                 continue
             ts = _safe_float(frame.get("timestamp"), -9999.0)
@@ -333,26 +358,37 @@ class EvidencePacker:
             seen_paths.add(path)
             if segment:
                 per_segment[segment] = per_segment.get(segment, 0) + 1
-            if len(selected) >= limit:
+            if limit is not None and len(selected) >= limit:
                 break
         return selected, removed
 
-    def _select_images(self, frames: list[dict[str, Any]], use_image: bool, max_images: int) -> list[str]:
-        if not use_image or max_images <= 0:
+    def _select_images(
+        self,
+        frames: list[dict[str, Any]],
+        use_image: bool,
+        per_evidence_limit: int,
+        total_limit: int | None,
+    ) -> list[str]:
+        if not use_image or per_evidence_limit <= 0 or (total_limit is not None and total_limit <= 0):
             return []
         selected = []
+        per_segment: dict[str, int] = {}
         for frame in frames:
             path = str(frame.get("path") or "")
             if not path:
                 continue
+            segment = str(frame.get("canonical_segment_id") or frame.get("segment_id") or path)
+            if per_segment.get(segment, 0) >= per_evidence_limit:
+                continue
             if not self._path_exists(path):
                 continue
             selected.append(path)
-            if len(selected) >= max_images:
+            per_segment[segment] = per_segment.get(segment, 0) + 1
+            if total_limit is not None and len(selected) >= total_limit:
                 break
         return selected
 
-    def _merge_preferred_images(self, preferred: list[str], existing: list[str], max_images: int) -> list[str]:
+    def _merge_preferred_images(self, preferred: list[str], existing: list[str], max_images: int | None) -> list[str]:
         selected: list[str] = []
         for path in preferred + existing:
             if not path or path in selected:
@@ -360,6 +396,6 @@ class EvidencePacker:
             if not self._path_exists(path):
                 continue
             selected.append(path)
-            if len(selected) >= max_images:
+            if max_images is not None and len(selected) >= max_images:
                 break
         return selected

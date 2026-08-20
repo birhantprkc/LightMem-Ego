@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Tuple
 
 import httpx
 import openai
+from online_llm_config import local_llm_enabled, merge_local_chat_request_kwargs
 from filelock import FileLock
 from openai import OpenAI
 from openai import AzureOpenAI
@@ -42,6 +43,8 @@ def _normalize_reasoning_effort(value: Any) -> str:
 
 
 def _reasoning_effort_kwargs() -> Dict[str, Any]:
+    if local_llm_enabled():
+        return {}
     if _env_bool("EM2MEM_OPENAI_DISABLE_REASONING", True):
         return {"reasoning_effort": "none"}
     effort = (
@@ -215,6 +218,7 @@ class CacheOpenAI(BaseLLM):
         if kwargs:
             params.update(kwargs)
         params.update(_reasoning_effort_kwargs())
+        params = merge_local_chat_request_kwargs(params)
         params["messages"] = messages
         logger.debug(f"Calling OpenAI GPT API with:\n{params}")
 

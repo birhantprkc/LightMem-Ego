@@ -83,9 +83,7 @@ def warm_query_session(
     except Exception:
         query_context = {
             "session_id": requested_session_id,
-            "is_rokid_day_child": False,
             "long_term_session_id": requested_session_id,
-            "parent_session_id": requested_session_id,
         }
     long_term_selection = resolve_query_long_term_candidates(
         requested_session_id,
@@ -104,8 +102,7 @@ def warm_query_session(
         "session_id": requested_session_id,
         "requested_session_id": requested_session_id,
         "long_term_session_id": long_term_session_id,
-        "parent_session_id": query_context.get("parent_session_id"),
-        "is_rokid_day_child": bool(query_context.get("is_rokid_day_child")),
+        "day_context": query_context.get("day_context"),
         "reason": reason,
         "started_at": utc_now_iso(),
         "updated_at": utc_now_iso(),

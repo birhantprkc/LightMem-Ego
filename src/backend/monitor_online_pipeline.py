@@ -47,7 +47,7 @@ def _print_table(runtime: dict[str, Any], *, show_timeline: bool = False) -> Non
     print("Workers")
     print("worker          inst  role             status        pid  age    warmup  model/client                         queue  last_error")
     workers = runtime.get("workers") or {}
-    for name in ("stream", "live_ingest", "preprocess", "evidence", "refine", "consolidation", "visual", "memory", "rokid_day_merge", "query"):
+    for name in ("stream", "live_ingest", "preprocess", "evidence", "refine", "consolidation", "visual", "memory", "query"):
         item = workers.get(name) or {}
         model = item.get("model_name") or item.get("backend") or "-"
         loaded = item.get("model_loaded") or item.get("client_loaded")
@@ -67,7 +67,6 @@ def _print_table(runtime: dict[str, Any], *, show_timeline: bool = False) -> Non
         ("stream", "stream_chunk_queued", "stream_chunk_in_progress", "stream_chunk_done", "stream_chunk_failed"),
         ("live_ingest", "live_ingest_queued", "live_ingest_in_progress", "live_ingest_done", "live_ingest_failed"),
         ("stream_asr", "stream_asr_queued", "stream_asr_in_progress", "stream_asr_done", "stream_asr_failed"),
-        ("rokid_day_merge", "rokid_day_merge_queued", "rokid_day_merge_in_progress", "rokid_day_merge_done", "rokid_day_merge_failed"),
         ("preprocess", "queued", "in_progress", "done", "failed"),
         ("evidence", "evidence_queued", "evidence_in_progress", "evidence_done", "evidence_failed"),
         ("refine", "mst_refine_queued", "mst_refine_in_progress", "mst_refine_done", "mst_refine_failed"),

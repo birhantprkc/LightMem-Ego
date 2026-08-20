@@ -27,7 +27,6 @@ flows, then adds an offline script that exports a session-level `eval.json`.
 - `scripts/build_session_eval.py`
   - New offline exporter.
   - Writes `online_sessions/{session_id}/eval.json` by default.
-  - Automatically includes related Rokid parent/day-child sessions unless `--no-related-sessions` is passed.
 
 ## How To Apply
 

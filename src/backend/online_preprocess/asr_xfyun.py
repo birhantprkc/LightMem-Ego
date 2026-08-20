@@ -28,8 +28,15 @@ TASK_CREATE_URI = "/v2/ost/pro_create"
 TASK_QUERY_URI = "/v2/ost/query"
 
 
+_NO_SPEECH_ERROR_CODES = {"20304"}
+
+
 class XfyunASRError(OnlinePreprocessError):
     """Raised when the Xfyun ASR WebAPI cannot produce a transcript."""
+
+
+class XfyunNoSpeechError(XfyunASRError):
+    """Raised when Xfyun reports a completed task with no transcribable speech."""
 
 
 @dataclass(frozen=True)
@@ -94,6 +101,10 @@ def _env_int(name: str, default: int) -> int:
         return int(value)
     except ValueError:
         return default
+
+
+def _is_no_speech_error_code(code: Any) -> bool:
+    return str(code) in _NO_SPEECH_ERROR_CODES
 
 
 def _format_srt_timestamp(seconds: float) -> str:
@@ -315,16 +326,26 @@ class XfyunASRClient:
             raise XfyunASRError(f"Xfyun ASR {action} request failed: {exc}") from exc
 
         text = response.text
-        if response.status_code != 200:
-            raise XfyunASRError(f"Xfyun ASR {action} returned HTTP {response.status_code}: {text[:300]}")
+        payload: dict[str, Any] | None = None
         try:
             payload = response.json()
-        except ValueError as exc:
-            raise XfyunASRError(f"Xfyun ASR {action} returned non-JSON response: {text[:300]}") from exc
+        except ValueError:
+            payload = None
+
+        if response.status_code != 200:
+            if action == "query task" and isinstance(payload, dict) and _is_no_speech_error_code(payload.get("code")):
+                raise XfyunNoSpeechError(
+                    f"Xfyun ASR {action} reported no-speech condition: code={payload.get('code')} message={payload.get('message')}"
+                )
+            raise XfyunASRError(f"Xfyun ASR {action} returned HTTP {response.status_code}: {text[:300]}")
         if not isinstance(payload, dict):
-            raise XfyunASRError(f"Xfyun ASR {action} returned invalid JSON payload")
+            raise XfyunASRError(f"Xfyun ASR {action} returned non-JSON response: {text[:300]}")
         code = payload.get("code")
         if code not in (0, "0", None):
+            if action == "query task" and _is_no_speech_error_code(code):
+                raise XfyunNoSpeechError(
+                    f"Xfyun ASR {action} reported no-speech condition: code={code} message={payload.get('message')}"
+                )
             raise XfyunASRError(f"Xfyun ASR {action} failed: code={code} message={payload.get('message')}")
         return payload
 
@@ -524,18 +545,25 @@ def transcribe_audio_with_xfyun(
         raise OnlinePreprocessError(f"Audio file does not exist: {audio_path}")
 
     active_client = client or XfyunASRClient()
-    normalized = active_client.transcribe(audio_path)
+    empty_transcript_reason: str | None = None
+    try:
+        normalized = active_client.transcribe(audio_path)
+    except XfyunNoSpeechError:
+        normalized = []
+        empty_transcript_reason = "xfyun_no_speech_20304"
+    if not normalized and empty_transcript_reason is None:
+        empty_transcript_reason = "xfyun_empty_transcript"
     _write_srt(output_srt, normalized)
     write_json(output_json, normalized)
-    write_json(
-        _metadata_path(output_json),
-        {
-            "backend": "xfyun",
-            "provider": "iflytek",
-            "xfyun_task_id": active_client.last_task_id,
-            "audio_path": str(audio_path),
-            "segment_count": len(normalized),
-            "created_at": utc_now_iso(),
-        },
-    )
+    metadata = {
+        "backend": "xfyun",
+        "provider": "iflytek",
+        "xfyun_task_id": active_client.last_task_id,
+        "audio_path": str(audio_path),
+        "segment_count": len(normalized),
+        "created_at": utc_now_iso(),
+    }
+    if empty_transcript_reason:
+        metadata["empty_transcript_reason"] = empty_transcript_reason
+    write_json(_metadata_path(output_json), metadata)
     return normalized

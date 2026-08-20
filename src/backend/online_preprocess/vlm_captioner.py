@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .evidence_schema import build_fallback_payload, normalize_caption_payload
+from online_llm_config import local_llm_enabled, merge_local_chat_request_kwargs
 
 
 SYSTEM_PROMPT = """You are converting a 30-second first-person video segment into a grounded evidence document for long-video memory retrieval.
@@ -90,6 +91,8 @@ def _normalize_reasoning_effort(value: Any) -> str:
 
 
 def _reasoning_effort_kwargs() -> dict[str, Any]:
+    if local_llm_enabled():
+        return {}
     if os.getenv("EM2MEM_OPENAI_DISABLE_REASONING", "1").strip().lower() in {"1", "true", "yes", "on"}:
         return {"reasoning_effort": "none"}
     effort = os.getenv("EM2MEM_CHAT_REASONING_EFFORT") or os.getenv("EM2MEM_OPENAI_REASONING_EFFORT") or "none"
@@ -182,7 +185,9 @@ class OpenAIVLMCaptioner(VLMCaptioner):
                 }
             )
 
-        request_kwargs = _reasoning_effort_kwargs()
+        request_kwargs = merge_local_chat_request_kwargs(_reasoning_effort_kwargs())
+        if local_llm_enabled():
+            request_kwargs["response_format"] = {"type": "json_object"}
         try:
             response = self.client.chat.completions.create(
                 model=self.model,

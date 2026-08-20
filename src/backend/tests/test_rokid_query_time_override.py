@@ -86,15 +86,14 @@ def test_rokid_query_time_override_uses_latest_runtime_relative_time(tmp_path: P
     _write_json(tmp_path / "stream" / "rokid_state.json", {"latest_frame_relative_ts_ms": 90_000})
     day_context = {
         "day_label": "DAY2",
-        "weekday_label": "周二",
         "display_day_label": "DAY2 周二",
-        "relative_ts_base_ms": 30_000,
+        "weekday_label": "周二",
+        "relative_ts_base_ms": 60_001,
     }
 
     override = query_engine._rokid_query_time_override(day_context, tmp_path)
 
-    assert override["until_date"] == "DAY2 周二"
-    assert override["until_time"] == "00010000"
+    assert override["until_date"] == "DAY2"
+    assert override["until_time"] == "00003000"
     assert override["relative_seconds"] == 90.0
-    assert override["local_day_seconds"] == 60.0
-    assert override["weekday_label"] == "周二"
+    assert override["local_day_seconds"] == 29.999

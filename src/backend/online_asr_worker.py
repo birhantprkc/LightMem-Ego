@@ -40,7 +40,7 @@ def _normalize_asr_backend(value: str | None, default: str = "xfyun") -> str:
 
 
 def _voice_question_backend() -> str:
-    return _normalize_asr_backend(os.getenv("EM2MEM_VOICE_QUESTION_ASR_BACKEND"), "whisperx")
+    return _normalize_asr_backend(os.getenv("EM2MEM_VOICE_QUESTION_ASR_BACKEND"), "xfyun")
 
 
 def _normalize_task_filter(value: str | None) -> str:

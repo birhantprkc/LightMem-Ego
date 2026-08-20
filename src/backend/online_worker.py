@@ -72,7 +72,7 @@ def run_worker(args: argparse.Namespace) -> None:
     )
 
     def _voice_question_backend() -> str:
-        return _normalize_asr_backend(os.getenv("EM2MEM_VOICE_QUESTION_ASR_BACKEND"), "whisperx")
+        return _normalize_asr_backend(os.getenv("EM2MEM_VOICE_QUESTION_ASR_BACKEND"), "xfyun")
 
     def _should_preload_whisperx() -> bool:
         if not _env_bool("EM2MEM_WHISPERX_PRELOAD", True):
@@ -94,7 +94,7 @@ def run_worker(args: argparse.Namespace) -> None:
         if str(task.get("source") or "") == "audio_chunk_window":
             return _normalize_asr_backend(os.getenv("EM2MEM_AUDIO_ASR_BACKEND") or str(task.get("asr_backend") or ""), "xfyun")
         if str(task.get("source") or "") == "voice_question":
-            return _normalize_asr_backend(os.getenv("EM2MEM_VOICE_QUESTION_ASR_BACKEND") or str(task.get("asr_backend") or ""), "whisperx")
+            return _normalize_asr_backend(os.getenv("EM2MEM_VOICE_QUESTION_ASR_BACKEND") or str(task.get("asr_backend") or ""), "xfyun")
         return _normalize_asr_backend(os.getenv("EM2MEM_STREAM_ASR_BACKEND") or str(task.get("asr_backend") or ""), "xfyun")
 
     def _runtime_model_loaded() -> bool:
@@ -346,6 +346,7 @@ def run_worker(args: argparse.Namespace) -> None:
                         skip_asr=args.skip_asr,
                         force=bool(task.get("force", args.force)),
                         asr_runtime=runtime,
+                        asr_backend=_normalize_asr_backend(args.preprocess_asr_backend, "xfyun"),
                     )
                 if _auto_legacy_evidence_enabled():
                     enqueue_evidence_task(

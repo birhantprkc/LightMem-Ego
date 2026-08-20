@@ -166,6 +166,60 @@ def test_small_upload_create_query_and_write_outputs(tmp_path) -> None:
     assert create_payload["data"]["encoding"] == "raw"
 
 
+def test_silence_query_no_speech_returns_empty_transcript(tmp_path) -> None:
+    audio_path = tmp_path / "silence.wav"
+    audio_path.write_bytes(b"RIFFfake-wave")
+    responses = [
+        {"code": 0, "data": {"url": "https://xfyun.example/audio.wav"}, "message": "success"},
+        {"code": 0, "data": {"task_id": "task-1"}, "message": "success"},
+        {"code": 20304, "data": {"task_status": "4", "task_type": "distribute_task"}, "message": "20304", "sid": "ost-no-speech"},
+    ]
+    session, sent = _fake_session(responses)
+    client = XfyunASRClient(_config(), session=session)
+
+    segments = transcribe_audio_with_xfyun(
+        audio_path=audio_path,
+        output_srt=tmp_path / "transcript.srt",
+        output_json=tmp_path / "transcript.json",
+        client=client,
+    )
+
+    assert segments == []
+    assert (tmp_path / "transcript.srt").read_text(encoding="utf-8") == ""
+    assert json.loads((tmp_path / "transcript.json").read_text(encoding="utf-8")) == []
+    metadata = json.loads((tmp_path / "transcript.json.meta.json").read_text(encoding="utf-8"))
+    assert metadata["segment_count"] == 0
+    assert metadata["empty_transcript_reason"] == "xfyun_no_speech_20304"
+    assert sent[2].url == f"https://{OST_HOST}{TASK_QUERY_URI}"
+
+
+def test_empty_lattice_returns_empty_transcript_and_marks_reason(tmp_path) -> None:
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"RIFFfake-wave")
+    responses = [
+        {"code": 0, "data": {"url": "https://xfyun.example/audio.wav"}, "message": "success"},
+        {"code": 0, "data": {"task_id": "task-1"}, "message": "success"},
+        {"code": 0, "data": {"task_status": "4", "result": {"lattice": []}}, "message": "success"},
+    ]
+    session, sent = _fake_session(responses)
+    client = XfyunASRClient(_config(), session=session)
+
+    segments = transcribe_audio_with_xfyun(
+        audio_path=audio_path,
+        output_srt=tmp_path / "transcript.srt",
+        output_json=tmp_path / "transcript.json",
+        client=client,
+    )
+
+    assert segments == []
+    assert (tmp_path / "transcript.srt").read_text(encoding="utf-8") == ""
+    assert json.loads((tmp_path / "transcript.json").read_text(encoding="utf-8")) == []
+    metadata = json.loads((tmp_path / "transcript.json.meta.json").read_text(encoding="utf-8"))
+    assert metadata["segment_count"] == 0
+    assert metadata["empty_transcript_reason"] == "xfyun_empty_transcript"
+    assert sent[2].url == f"https://{OST_HOST}{TASK_QUERY_URI}"
+
+
 def test_multipart_upload_flow_for_large_files(tmp_path) -> None:
     audio_path = tmp_path / "audio.wav"
     audio_path.write_bytes(b"12345678")

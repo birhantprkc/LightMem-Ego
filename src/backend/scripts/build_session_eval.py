@@ -123,29 +123,6 @@ def merged_metadata(session_dir: Path) -> dict[str, Any]:
     return {**metadata, **payload}
 
 
-def is_child_metadata(metadata: dict[str, Any]) -> bool:
-    return bool(metadata.get("is_rokid_day_child") and metadata.get("parent_session_id"))
-
-
-def discover_related_sessions(session_id: str, sessions_root: Path, include_related: bool) -> list[str]:
-    if not include_related:
-        return [session_id]
-    session_dir = sessions_root / session_id
-    metadata = merged_metadata(session_dir)
-    related = {session_id}
-    parent = str(metadata.get("parent_session_id") or "").strip() if is_child_metadata(metadata) else session_id
-    if parent:
-        related.add(parent)
-    for candidate in sessions_root.iterdir() if sessions_root.exists() else []:
-        if not candidate.is_dir():
-            continue
-        name = candidate.name
-        meta = merged_metadata(candidate)
-        if name.startswith(f"{parent}__day") or str(meta.get("parent_session_id") or "") == parent:
-            related.add(name)
-    return sorted(related)
-
-
 def classify_client(task_or_record: dict[str, Any], session_meta: dict[str, Any] | None = None) -> str:
     session_meta = session_meta or {}
     text = " ".join(
@@ -412,7 +389,7 @@ def build_eval(args: argparse.Namespace) -> dict[str, Any]:
     tasks_root = Path(args.tasks_root)
     if not tasks_root.is_absolute():
         tasks_root = PROJECT_ROOT / tasks_root
-    included = discover_related_sessions(args.session_id, sessions_root, not args.no_related_sessions)
+    included = [args.session_id]
     included_set = set(included)
     session_meta = {sid: merged_metadata(sessions_root / sid) for sid in included}
 
@@ -489,7 +466,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sessions-root", default="online_sessions")
     parser.add_argument("--tasks-root", default="online_tasks")
     parser.add_argument("--output", default=None)
-    parser.add_argument("--no-related-sessions", action="store_true")
     parser.add_argument("--pretty", action="store_true")
     return parser.parse_args()
 

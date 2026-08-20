@@ -9,6 +9,8 @@ if [[ -f .env ]]; then
   source .env
   set +a
 fi
+# shellcheck disable=SC1091
+source "$(pwd)/scripts/llm_profile.sh"
 
 if [[ -d .venv ]]; then
   # shellcheck disable=SC1091

@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This guide describes how to deploy the Em2Mem Online Server on a new GPU server with internet access. It assumes the API server, workers, model caches, and optional SRS live media service run on the same machine, so no relay or SSH tunnel is required.
+This guide describes how to deploy the LightMem-Ego Backend on a new GPU server with internet access. It assumes the API server, workers, model caches, and optional SRS live media service run on the same machine, so no relay or SSH tunnel is required.
 
 ## Target Layout
 
@@ -148,6 +148,50 @@ EM2MEM_WEBRTC_WHIP_APP=live
 
 If API, SRS, and workers are split across machines later, set `EM2MEM_LIVE_PULL_BASE_URL` only for the worker machine. For the single-server deployment described here, it should stay empty.
 
+## Local Qwen3.5-9B LLM
+
+The local LLM uses an isolated vLLM environment and does not modify the main
+worker environment. Model weights, the vLLM environment, logs, and runtime
+profile selection are ignored by Git.
+
+Install the pinned serving environment and download the official ModelScope
+snapshot:
+
+```bash
+scripts/setup_local_qwen35_env.sh
+scripts/download_local_qwen35_model.sh
+```
+
+The default deployment uses GPU 2, a 16K context window, two active sequences,
+and up to four images per prompt. It disables Qwen thinking output so existing
+JSON parsers and answer streaming receive only final content.
+
+Select the local profile and restart workers while keeping the public API up:
+
+```bash
+scripts/select_llm_profile.sh local-qwen35
+scripts/stop_server_and_workers.sh --keep-api --force
+```
+
+Check the service and run protocol smoke tests:
+
+```bash
+scripts/local_qwen35_health.sh
+.venv/bin/python scripts/smoke_test_local_qwen35.py
+```
+
+Return to the remote endpoint configured in `.env`:
+
+```bash
+scripts/select_llm_profile.sh remote
+scripts/stop_server_and_workers.sh --keep-api --force
+```
+
+Both local and remote profiles are maintained in the backend code. Profile
+selection is runtime configuration and does not require switching Git branches.
+Select the remote profile and restart the workers when the local model should
+release GPU memory.
+
 ## Rolling Audio ASR Defaults
 
 Realtime live audio remains sliced into short ingest chunks, but ASR tasks are scheduled on stable 5 second windows:
@@ -180,7 +224,7 @@ Open or proxy these ports as needed:
 - `1935/tcp`: RTMP publish and pull.
 - `1985/tcp`: SRS HTTP API and WHIP endpoint in the bundled helper.
 - `8080/tcp`: SRS HTTP server, if enabled.
-- `8000/tcp`: Em2Mem API.
+- `8000/tcp`: LightMem-Ego API.
 
 Production deployments should add TLS, authentication, reverse proxy rules, and firewall policy outside this repository.
 

@@ -31,6 +31,11 @@ from PIL import Image
 from tqdm.asyncio import tqdm as tqdm_asyncio
 
 from .utils import dynamic_retry_decorator
+from online_llm_config import (
+    local_cache_namespace,
+    local_llm_enabled,
+    merge_local_chat_request_kwargs,
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -125,6 +130,8 @@ def _normalize_reasoning_effort(value: Any) -> str:
 
 
 def _reasoning_effort_kwargs() -> Dict[str, Any]:
+    if local_llm_enabled():
+        return {}
     if _env_bool("EM2MEM_OPENAI_DISABLE_REASONING", True):
         return {"reasoning_effort": "none"}
     effort = (
@@ -394,7 +401,11 @@ class OpenAIModel:
         self.last_debug: Dict[str, Any] = {}
         
         # Initialize cache file path in current directory
-        self.cache_file_name = os.path.join(cache_dir or ".cache", f"openai_cache_{model_name.replace('-', '_')}.db")
+        cache_name = model_name.replace("-", "_")
+        cache_namespace = local_cache_namespace()
+        if cache_namespace:
+            cache_name = f"{cache_name}_{cache_namespace}"
+        self.cache_file_name = os.path.join(cache_dir or ".cache", f"openai_cache_{cache_name}.db")
 
         logger.info(f"Initialized OpenAIModel with {self.model_name}")
 
@@ -1092,7 +1103,9 @@ class OpenAIModel:
     ) -> Any:
         """Fallback path for proxies that support chat.completions but not responses."""
         chat_messages = self._convert_prompt_to_chat_messages(processed_prompt)
-        request_kwargs = {**self.kwargs, **_reasoning_effort_kwargs(), **kwargs}
+        request_kwargs = merge_local_chat_request_kwargs(
+            {**self.kwargs, **_reasoning_effort_kwargs(), **kwargs}
+        )
         try:
             max_attempts = max(1, int(os.getenv("EM2MEM_CHAT_COMPLETIONS_FALLBACK_ATTEMPTS", "2") or 2))
         except ValueError:
@@ -1261,7 +1274,9 @@ class OpenAIModel:
     ) -> Any:
         """Async fallback path for proxies that support chat.completions but not responses."""
         chat_messages = self._convert_prompt_to_chat_messages(processed_prompt)
-        request_kwargs = {**self.kwargs, **_reasoning_effort_kwargs(), **kwargs}
+        request_kwargs = merge_local_chat_request_kwargs(
+            {**self.kwargs, **_reasoning_effort_kwargs(), **kwargs}
+        )
 
         if text_format is not None:
             try:
@@ -1366,7 +1381,9 @@ class OpenAIModel:
     ) -> Any:
         """Streaming fallback path for proxies that support chat.completions streaming."""
         chat_messages = self._convert_prompt_to_chat_messages(processed_prompt)
-        request_kwargs = {**self.kwargs, **_reasoning_effort_kwargs(), **kwargs}
+        request_kwargs = merge_local_chat_request_kwargs(
+            {**self.kwargs, **_reasoning_effort_kwargs(), **kwargs}
+        )
         if text_format is not None:
             request_kwargs = dict(request_kwargs)
             request_kwargs["response_format"] = {"type": "json_object"}

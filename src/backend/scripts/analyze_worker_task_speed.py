@@ -12,7 +12,6 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DAY_CHILD_SEPARATOR = "__day"
 
 
 WORKER_DIRS = {
@@ -26,11 +25,6 @@ WORKER_DIRS = {
         "failed": "mst_refine_failed",
         "in_progress": "mst_refine_in_progress",
     },
-    "rokid_day_merge": {
-        "done": "rokid_day_merge_done",
-        "failed": "rokid_day_merge_failed",
-        "in_progress": "rokid_day_merge_in_progress",
-    },
 }
 
 WORKER_ALIASES = {
@@ -38,7 +32,6 @@ WORKER_ALIASES = {
     "mst_refine_worker": "refine",
     "refine_worker": "refine",
     "query_worker": "query",
-    "rokid_day_merge_worker": "rokid_day_merge",
 }
 
 
@@ -171,10 +164,6 @@ def _result_latency_s(worker: str, task: dict[str, Any]) -> float | None:
             result.get("total_ms"),
         )
         return value_ms / 1000.0 if value_ms is not None else None
-    if worker == "rokid_day_merge":
-        merged_at = parse_iso(result.get("merged_at"))
-        claimed_at = parse_iso(task.get("claimed_at"))
-        return seconds_between(claimed_at, merged_at)
     return None
 
 
@@ -186,22 +175,13 @@ def _item_count(worker: str, task: dict[str, Any]) -> tuple[float | None, str]:
         refined = _first_number(result.get("refined_event_count"))
         selected = _first_number(result.get("selected_event_count"))
         return refined if refined is not None else selected, "event"
-    if worker == "rokid_day_merge":
-        incoming = result.get("incoming_counts") if isinstance(result.get("incoming_counts"), dict) else {}
-        count = _first_number(incoming.get("episodes"), incoming.get("evidence"), incoming.get("captions"))
-        return count, "episode"
     return None, "item"
 
 
 def task_matches_session(task: dict[str, Any], session_filter: set[str]) -> bool:
     if not session_filter:
         return True
-    fields = (
-        task.get("session_id"),
-        task.get("parent_session_id"),
-        task.get("child_session_id"),
-    )
-    return any(str(value or "") in session_filter for value in fields)
+    return str(task.get("session_id") or "") in session_filter
 
 
 def task_matches_task_id(task: dict[str, Any], task_ids: set[str]) -> bool:
@@ -253,12 +233,7 @@ def metric_from_task(
         status_bucket=status_bucket,
         status=str(task.get("status") or status_bucket),
         task_id=str(task.get("task_id") or path.stem),
-        session_id=str(
-            task.get("session_id")
-            or task.get("child_session_id")
-            or task.get("parent_session_id")
-            or ""
-        ),
+        session_id=str(task.get("session_id") or ""),
         created_at=created_at,
         claimed_at=claimed_at,
         finished_at=finished_at,
@@ -290,80 +265,14 @@ def _append_unique(items: list[str], value: Any) -> None:
         items.append(text)
 
 
-def _child_session_ids_from_day_state(parent_dir: Path, parent_session_id: str) -> list[str]:
-    state = read_json(parent_dir / "stream" / "day_state.json")
-    if not isinstance(state, dict):
-        return []
-    parent_from_state = str(state.get("parent_session_id") or parent_session_id).strip()
-    if parent_from_state != parent_session_id:
-        return []
-    children: list[str] = []
-    runs = state.get("runs") if isinstance(state.get("runs"), dict) else {}
-    for run in runs.values():
-        if not isinstance(run, dict):
-            continue
-        if str(run.get("parent_session_id") or parent_session_id).strip() != parent_session_id:
-            continue
-        _append_unique(children, run.get("child_session_id"))
-    return children
-
-
-def _child_session_id_from_metadata(session_dir: Path, parent_session_id: str) -> str | None:
-    payload = read_json(session_dir / "metadata.json")
-    if not isinstance(payload, dict):
-        return None
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-    merged = {**metadata, **payload}
-    if str(merged.get("parent_session_id") or "").strip() != parent_session_id:
-        return None
-    child_id = str(merged.get("child_session_id") or payload.get("session_id") or session_dir.name).strip()
-    return child_id or session_dir.name
-
-
 def expand_session_filter(
     session_ids: list[str],
     *,
     sessions_root: Path,
     expand_child_sessions: bool,
 ) -> tuple[set[str], dict[str, list[str]], list[str]]:
-    filter_ids: list[str] = []
-    expansion_map: dict[str, list[str]] = {}
-    warnings: list[str] = []
-    for session_id in session_ids:
-        _append_unique(filter_ids, session_id)
-    if not session_ids or not expand_child_sessions:
-        return set(filter_ids), expansion_map, warnings
-    if not sessions_root.exists():
-        warnings.append(f"sessions root not found, child session expansion skipped: {sessions_root}")
-        return set(filter_ids), expansion_map, warnings
-
-    for session_id in session_ids:
-        children: list[str] = []
-        parent_dir = sessions_root / session_id
-        if parent_dir.exists() and parent_dir.is_dir():
-            for child_id in _child_session_ids_from_day_state(parent_dir, session_id):
-                _append_unique(children, child_id)
-
-        prefix = f"{session_id}{DAY_CHILD_SEPARATOR}"
-        try:
-            session_dirs = [path for path in sessions_root.iterdir() if path.is_dir()]
-        except Exception as exc:
-            warnings.append(f"unable to scan sessions root for child sessions: {sessions_root}: {exc}")
-            session_dirs = []
-
-        for session_dir in session_dirs:
-            if session_dir.name.startswith(prefix):
-                _append_unique(children, session_dir.name)
-            child_id = _child_session_id_from_metadata(session_dir, session_id)
-            if child_id:
-                _append_unique(children, child_id)
-
-        if children:
-            expansion_map[session_id] = children
-            for child_id in children:
-                _append_unique(filter_ids, child_id)
-
-    return set(filter_ids), expansion_map, warnings
+    del sessions_root, expand_child_sessions
+    return set(session_ids), {}, []
 
 
 def normalize_workers(values: list[str] | None) -> list[str]:
@@ -388,7 +297,7 @@ def load_metrics(args: argparse.Namespace) -> tuple[list[TaskMetric], list[str],
     session_filter, expansion_map, expansion_warnings = expand_session_filter(
         requested_session_ids,
         sessions_root=sessions_root,
-        expand_child_sessions=bool(args.expand_child_sessions),
+        expand_child_sessions=False,
     )
     task_ids = set(expand_csv(args.task_id))
     since = parse_iso(args.since)
@@ -632,28 +541,11 @@ def main() -> None:
     parser.add_argument("--project-root", default=str(PROJECT_ROOT), help="Repository root. Default: this script's parent repo.")
     parser.add_argument("--tasks-root", default=None, help="Path to online_tasks. Default: <project-root>/online_tasks.")
     parser.add_argument("--sessions-root", default=None, help="Path to online_sessions. Default: <project-root>/online_sessions.")
-    parser.add_argument("--worker", action="append", help="Worker to inspect: all, query, refine, rokid_day_merge. Can be comma-separated.")
+    parser.add_argument("--worker", action="append", help="Worker to inspect: all, query, refine. Can be comma-separated.")
     parser.add_argument(
         "--session-id",
         action="append",
-        help=(
-            "Filter by session_id, parent_session_id, or child_session_id. "
-            "Parent Rokid sessions are expanded to matching child sessions by default. "
-            "Can be repeated or comma-separated."
-        ),
-    )
-    parser.add_argument(
-        "--expand-child-sessions",
-        dest="expand_child_sessions",
-        action="store_true",
-        default=True,
-        help="When --session-id is a parent Rokid session, include child sessions found under online_sessions. Default: on.",
-    )
-    parser.add_argument(
-        "--no-expand-child-sessions",
-        dest="expand_child_sessions",
-        action="store_false",
-        help="Only match the exact session ids passed through --session-id.",
+        help="Filter by session_id. Can be repeated or comma-separated.",
     )
     parser.add_argument("--task-id", action="append", help="Filter by exact or partial task_id. Can be repeated or comma-separated.")
     parser.add_argument("--status", action="append", help="Override status buckets: done, failed, in_progress. Can be comma-separated.")
@@ -678,7 +570,7 @@ def main() -> None:
                     "summary": summarize(metrics),
                     "records": [metric_to_dict(item) for item in metrics],
                     "warnings": warnings,
-                    "expanded_child_sessions": expansion_map,
+                    "session_expansion": expansion_map,
                 },
                 ensure_ascii=False,
                 indent=2,
