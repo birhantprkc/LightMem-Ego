@@ -1,6 +1,6 @@
-# Em2Mem Online Server
+# LightMem-Ego Backend
 
-Em2Mem Online Server is an online long-video and realtime multimodal memory QA server. It accepts uploaded videos, chunked stream fallback input, direct frame/audio realtime input, and live media ingest sources, then builds current, short-term, and long-term multimodal memories for query-time evidence retrieval and answer generation.
+LightMem-Ego Backend is an online long-video and realtime multimodal memory QA server. It accepts uploaded videos, chunked stream fallback input, direct frame/audio realtime input, and live media ingest sources, then builds current, short-term, and long-term multimodal memories for query-time evidence retrieval and answer generation.
 
 ## Key Features
 
@@ -59,10 +59,10 @@ Answer + Evidence
 - `online_streaming/`: partial transcript and ASR backfill.
 - `online_pipeline/`: realtime ingest, live source, backpressure, runtime state.
 - `online_preprocess/`: video segmentation, keyframe sampling, ASR, evidence creation.
-- `online_memory/` and `online_memory_incremental/`: Em2Mem layout, incremental updates, HippoRAG cache handling.
+- `online_memory/` and `online_memory_incremental/`: LightMem-Ego memory layout, incremental updates, HippoRAG cache handling.
 - `online_query/`: query planning, routing, retrieval, evidence packing, and answer generation.
 - `online_visual/`: visual index and VLM2Vec runtime integration.
-- `src/em2mem/`: runtime Em2Mem memory, LLM, and embedding components used by the server.
+- `src/em2mem/`: runtime memory, LLM, and embedding components used by LightMem-Ego.
 - `src/HippoRAG/`: vendored runtime subset needed by long-term retrieval.
 - `scripts/`: server, worker, RTMP/SRS, and realtime input helper scripts.
 - `deploy/srs/srs.conf`: minimal SRS configuration for local live ingest experiments.
@@ -266,4 +266,4 @@ No secrets, `.env` files, private certificates, tokens, model weights, or server
 
 ## Citation And Acknowledgements
 
-If you use this code in a paper or artifact, cite the associated Em2Mem work when available and acknowledge the external model and retrieval components used in your deployment. This release does not claim any acceptance venue or benchmark result by itself.
+If you use this code in a paper or artifact, cite the associated LightMem-Ego work when available and acknowledge the external model and retrieval components used in your deployment. This release does not claim any acceptance venue or benchmark result by itself.
