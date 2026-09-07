@@ -56,6 +56,8 @@ MODEL_DICT = {
     "gpt-5-mini": "gpt-5-mini-2025-08-07",
     "gpt-5-nano": "gpt-5-nano-2025-08-07",
     "gpt-4o-mini":"gpt-4o-mini",
+    "Qwen3.5-9B": "Qwen3.5-9B",
+    "qwen3.5-9b": "Qwen3.5-9B",
 }
 
 # Global cache configuration
@@ -129,8 +131,10 @@ def _normalize_reasoning_effort(value: Any) -> str:
     return effort
 
 
-def _reasoning_effort_kwargs() -> Dict[str, Any]:
-    if local_llm_enabled():
+def _reasoning_effort_kwargs(local_enabled: Optional[bool] = None) -> Dict[str, Any]:
+    if local_enabled is None:
+        local_enabled = local_llm_enabled()
+    if local_enabled:
         return {}
     if _env_bool("EM2MEM_OPENAI_DISABLE_REASONING", True):
         return {"reasoning_effort": "none"}
@@ -337,6 +341,8 @@ class OpenAIModel:
         fps: Optional[int] = None,
         nframes: Optional[int] = None,
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        local_mode: Optional[bool] = None,
         cache_dir: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
@@ -367,11 +373,12 @@ class OpenAIModel:
             raise ValueError(f"Unsupported model: {model_name}. Available: {list(MODEL_DICT.keys())}")
 
         # Initialize API key
+        self.local_mode = local_llm_enabled() if local_mode is None else bool(local_mode)
         api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise OpenAIModelError("OpenAI API key not found. Set OPENAI_API_KEY environment variable or pass api_key parameter.")
 
-        base_url = (
+        base_url = base_url or (
             os.getenv("OPENAI_BASE_URL")
             or os.getenv("OPENAI_API_BASE")
             or os.getenv("OPENAI_API_URL")
@@ -408,6 +415,12 @@ class OpenAIModel:
         self.cache_file_name = os.path.join(cache_dir or ".cache", f"openai_cache_{cache_name}.db")
 
         logger.info(f"Initialized OpenAIModel with {self.model_name}")
+
+    def _request_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        return merge_local_chat_request_kwargs(
+            {**self.kwargs, **_reasoning_effort_kwargs(self.local_mode), **kwargs},
+            enabled=self.local_mode,
+        )
 
     def _validate_file_path(self, file_path: Union[str, Path]) -> Path:
         """Validate and convert file path to Path object."""
@@ -1103,9 +1116,7 @@ class OpenAIModel:
     ) -> Any:
         """Fallback path for proxies that support chat.completions but not responses."""
         chat_messages = self._convert_prompt_to_chat_messages(processed_prompt)
-        request_kwargs = merge_local_chat_request_kwargs(
-            {**self.kwargs, **_reasoning_effort_kwargs(), **kwargs}
-        )
+        request_kwargs = self._request_kwargs(kwargs)
         try:
             max_attempts = max(1, int(os.getenv("EM2MEM_CHAT_COMPLETIONS_FALLBACK_ATTEMPTS", "2") or 2))
         except ValueError:
@@ -1274,9 +1285,7 @@ class OpenAIModel:
     ) -> Any:
         """Async fallback path for proxies that support chat.completions but not responses."""
         chat_messages = self._convert_prompt_to_chat_messages(processed_prompt)
-        request_kwargs = merge_local_chat_request_kwargs(
-            {**self.kwargs, **_reasoning_effort_kwargs(), **kwargs}
-        )
+        request_kwargs = self._request_kwargs(kwargs)
 
         if text_format is not None:
             try:
@@ -1381,9 +1390,7 @@ class OpenAIModel:
     ) -> Any:
         """Streaming fallback path for proxies that support chat.completions streaming."""
         chat_messages = self._convert_prompt_to_chat_messages(processed_prompt)
-        request_kwargs = merge_local_chat_request_kwargs(
-            {**self.kwargs, **_reasoning_effort_kwargs(), **kwargs}
-        )
+        request_kwargs = self._request_kwargs(kwargs)
         if text_format is not None:
             request_kwargs = dict(request_kwargs)
             request_kwargs["response_format"] = {"type": "json_object"}

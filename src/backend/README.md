@@ -1,6 +1,6 @@
-# LightMem-Ego Backend
+# Em2Mem Online Server
 
-LightMem-Ego Backend is an online long-video and realtime multimodal memory QA server. It accepts uploaded videos, chunked stream fallback input, direct frame/audio realtime input, and live media ingest sources, then builds current, short-term, and long-term multimodal memories for query-time evidence retrieval and answer generation.
+Em2Mem Online Server is an online long-video and realtime multimodal memory QA server. It accepts uploaded videos, chunked stream fallback input, direct frame/audio realtime input, and live media ingest sources, then builds current, short-term, and long-term multimodal memories for query-time evidence retrieval and answer generation.
 
 ## Key Features
 
@@ -59,10 +59,10 @@ Answer + Evidence
 - `online_streaming/`: partial transcript and ASR backfill.
 - `online_pipeline/`: realtime ingest, live source, backpressure, runtime state.
 - `online_preprocess/`: video segmentation, keyframe sampling, ASR, evidence creation.
-- `online_memory/` and `online_memory_incremental/`: LightMem-Ego memory layout, incremental updates, HippoRAG cache handling.
+- `online_memory/` and `online_memory_incremental/`: Em2Mem layout, incremental updates, HippoRAG cache handling.
 - `online_query/`: query planning, routing, retrieval, evidence packing, and answer generation.
 - `online_visual/`: visual index and VLM2Vec runtime integration.
-- `src/em2mem/`: runtime memory, LLM, and embedding components used by LightMem-Ego.
+- `src/em2mem/`: runtime Em2Mem memory, LLM, and embedding components used by the server.
 - `src/HippoRAG/`: vendored runtime subset needed by long-term retrieval.
 - `scripts/`: server, worker, RTMP/SRS, and realtime input helper scripts.
 - `deploy/srs/srs.conf`: minimal SRS configuration for local live ingest experiments.
@@ -113,10 +113,12 @@ scripts/select_llm_profile.sh local-qwen35
 scripts/stop_server_and_workers.sh --keep-api --force
 ```
 
-The local profile serves Qwen3.5 under the compatibility alias `gpt-5.4`, so
-existing memory artifacts and worker model selection continue to work. It
-uses GPU 2 by default and moves the stream ASR default to GPU 1. Verify text,
-JSON, image, and streaming requests with:
+The local profile serves Qwen3.5 under the configured served-model name
+(`Qwen3.5-9B` by default), and keeps the external model for retrieval/refine
+workers. It uses GPU 2 by default and moves the stream ASR default to GPU 1.
+Image QA is capped at three frames per evidence and nine frames per request,
+matching the vLLM multimodal limit. Verify text, JSON, image, and streaming
+requests with:
 
 ```bash
 .venv/bin/python scripts/smoke_test_local_qwen35.py
@@ -266,4 +268,4 @@ No secrets, `.env` files, private certificates, tokens, model weights, or server
 
 ## Citation And Acknowledgements
 
-If you use this code in a paper or artifact, cite the associated LightMem-Ego work when available and acknowledge the external model and retrieval components used in your deployment. This release does not claim any acceptance venue or benchmark result by itself.
+If you use this code in a paper or artifact, cite the associated Em2Mem work when available and acknowledge the external model and retrieval components used in your deployment. This release does not claim any acceptance venue or benchmark result by itself.

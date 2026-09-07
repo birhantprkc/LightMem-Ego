@@ -515,7 +515,10 @@ class XfyunASRClient:
         audio_url = self.upload_file(audio_path)
         task_id = self.create_task(audio_url, audio_path)
         self.last_task_id = task_id
-        result = self.wait_for_result(task_id)
+        try:
+            result = self.wait_for_result(task_id)
+        except XfyunNoSpeechError:
+            return []
         return _normalize_lattice(result)
 
 
