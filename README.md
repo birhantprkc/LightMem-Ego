@@ -216,6 +216,18 @@ cd src/ai_glass_app
 ./gradlew assembleDebug
 ```
 
+### Docker
+
+The repository includes a Docker Compose stack for reproducing the web frontend and backend. It keeps API keys, model weights, and runtime media outside the images:
+
+```bash
+cp deploy/.env.example .env
+# edit .env with your OpenAI-compatible endpoint and model names
+docker compose up --build
+```
+
+Open `http://localhost:8080`. See [`deploy/DOCKER.md`](deploy/DOCKER.md) for optional GPU model services, ASR, and SRS profiles.
+
 ---
 
 <span id="scenarios"></span>
