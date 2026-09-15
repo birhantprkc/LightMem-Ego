@@ -272,38 +272,10 @@ Details: [`src/ai_glass_app/README.md`](src/ai_glass_app/README.md)
   <img src="./figs/system_design.png" width="90%" alt="LightMem-Ego system design">
 </div>
 
-```mermaid
-%%{init: {"theme":"base","themeVariables":{"fontFamily":"Helvetica, Arial, sans-serif","fontSize":"14px","lineColor":"#8593A5","primaryColor":"#FFFFFF","primaryTextColor":"#12283F","primaryBorderColor":"#8593A5","clusterBkg":"#FAFBFD","clusterBorder":"#D3DAE3"}}}%%
-flowchart LR
-    subgraph capture["Capture"]
-        G["Rokid AI Glasses"]
-        W["Web browser"]
-    end
-
-    subgraph tiers["Hierarchical memory"]
-        MCUR["M_cur · current"]
-        MST["M_st · short-term"]
-        MLT["M_lt · long-term (EM²Mem)"]
-    end
-
-    API["Stream API<br/>frames, audio, metadata"]
-    RET["Query router<br/>and evidence retrieval"]
-    ANS["Grounded answer<br/>with timestamped evidence"]
-
-    G --> API
-    W --> API
-    API --> MCUR
-    MCUR --> MST
-    MST --> MLT
-    MCUR --> RET
-    MST --> RET
-    MLT --> RET
-    RET --> ANS
-
-    classDef tier fill:#EEF3F9,stroke:#2C5C8A,stroke-width:1px,color:#12283F
-    classDef plain fill:#FFFFFF,stroke:#8593A5,stroke-width:1px,color:#12283F
-    class MCUR,MST,MLT tier
-    class API,RET,ANS plain
+```text
+Rokid AI Glasses ─┐
+                  ├─► Stream API ─► M_cur ─► M_st ─► M_lt ─► Retrieval ─► Answer + Evidence
+Browser (web) ────┘                 current  short   long
 ```
 
 | Memory tier | Scope | Example |
@@ -385,10 +357,6 @@ sequenceDiagram
 
 *Glasses columns are the glasses-style client profile.*
 
-<div align="center">
-  <img src="./figs/chart_latency_breakdown.png" width="92%" alt="End-to-end latency by memory scope and client: retrieval versus answer generation, P50 and P90">
-</div>
-
 ### Long-term memory engine — EM²Mem
 
 The long-term tier (`M_lt`) is built by EM²Mem. Average accuracy (%) across three long-video and egocentric benchmarks, as reported in the EM²Mem paper:
@@ -409,10 +377,6 @@ Against the strongest baseline (WorldMM, reproduced under the same evaluation se
 | Avg. latency per query | **98.21 s** | 459.00 s | 4.67× faster |
 | Wall-clock evaluation time | **6,138 s** | 229,502 s | 37.4× faster |
 | Total tokens | **15.27M** | 42.03M | 63.7% fewer |
-
-<div align="center">
-  <img src="./figs/chart_latency_em2mem.png" width="76%" alt="Average latency per query: EM²Mem 98.21 s versus WorldMM 459.00 s">
-</div>
 
 EM²Mem moves multimodal alignment and graph organization into offline memory construction, so inference reads from pre-built event-indexed memory cells instead of re-aligning isolated fragments. Full per-category tables are in the [backend README](src/backend/README.md#results); reproduction scripts in [`experiments/egolife`](https://github.com/zjunlp/LightMem/tree/main/experiments/egolife#results).
 
