@@ -10,10 +10,6 @@
 </p>
 
 <p align="center">
-  Current, short-term and long-term memory on one timeline, with timestamped evidence for every answer.
-</p>
-
-<p align="center">
   <a href="https://arxiv.org/abs/2607.11487"><img src="https://img.shields.io/badge/arXiv-2607.11487-b31b1b?logo=arxiv&logoColor=white" alt="arXiv"></a>
   <a href="https://huggingface.co/papers/2607.11487"><img src="https://img.shields.io/badge/HuggingFace-Paper-yellow?logo=huggingface&logoColor=white" alt="Hugging Face Paper"></a>
   <a href="https://arxiv.org/abs/2609.00551"><img src="https://img.shields.io/badge/EM%C2%B2Mem-2609.00551-b31b1b?logo=arxiv&logoColor=white" alt="EM²Mem paper"></a>
@@ -112,9 +108,12 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
   </tr>
 </table>
 
-<p align="center">
-  ✓ Browser and Rokid AI Glasses &nbsp;·&nbsp; ✓ Self-hostable with Docker &nbsp;·&nbsp; ✓ Timestamped evidence on every answer &nbsp;·&nbsp; ✓ One aligned timeline
-</p>
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./figs/feature_strip_dark.png">
+    <img src="./figs/feature_strip.png" width="100%" alt="Runs on glasses and in the browser; self-hostable; timestamped evidence; three-tier memory">
+  </picture>
+</div>
 
 <h5 align="center">⭐ If LightMem-Ego is useful to you, a star helps more people find it.</h5>
 
