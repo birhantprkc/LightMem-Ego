@@ -1,7 +1,7 @@
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./figs/hero_dark.png">
-    <img src="./figs/hero.png" width="100%" alt="LightMem-Ego: Your AI Memory for Everyday Life">
+    <source media="(prefers-color-scheme: dark)" srcset="./figs/lockup_dark.png">
+    <img src="./figs/lockup.png" width="100%" alt="LightMem-Ego: Your AI Memory for Everyday Life">
   </picture>
 </div>
 
