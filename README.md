@@ -27,11 +27,12 @@
 - [🎬 Demo](#demo)
 - [📢 News](#news)
 - [✨ Highlights](#highlights)
-- [🆚 How It Compares](#comparison)
+- [🎯 Why LightMem-Ego](#why)
 - [💬 What You Can Ask](#scenarios)
 - [🚀 Quick Start](#quick-start)
 - [🏗️ How It Works](#architecture)
 - [📊 Results](#results)
+- [🆚 How It Compares](#comparison)
 - [📦 Repository Layout](#repository-layout)
 - [🗺️ Roadmap](#roadmap)
 - [📄 Citation](#citation)
@@ -142,27 +143,21 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 
 ---
 
-<span id="comparison"></span>
+<span id="why"></span>
 
-## 🆚 How It Compares
+## 🎯 Why LightMem-Ego
 
-Representative commercial assistants, text-based memory systems, and egocentric multimodal assistants. This compares publicly described capabilities rather than measured performance.
+Existing memory systems each solve one slice of the problem:
 
-| System | Platform & input | Real-time A/V stream | Current / short-term MM memory | Long-term episodic | Long-term semantic | Timestamped evidence |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| ChatGPT Memory | Text chat | — | — | — | Partial | — |
-| Mem0-style memory | Text and agent memory | — | Partial | — | ✓ | Partial |
-| Memories.ai | Video archives and visual memory | Partial | Partial | ✓ | Partial | Partial |
-| Gemini Live | Phone | ✓ | Partial | — | — | — |
-| Ray-Ban Meta AI Glasses | Glasses | Partial | Partial | — | — | — |
-| Vinci | Phone or wearable camera | ✓ | ✓ | Partial | Partial | Partial |
-| VisualClaw | Streaming video with agent workspace | Partial | Partial | — | Partial | Partial |
-| VisionClaw | Smart glasses | ✓ | Partial | — | — | Partial |
-| Egocentric Co-Pilot | Smart glasses with web agents | ✓ | ✓ | Partial | Partial | Partial |
-| EgoButler | AI-glasses egocentric video and audio | Partial | Partial | Partial | Partial | ✓ |
-| **LightMem-Ego** | **Phone and glasses-style client** | **✓** | **✓** | **✓** | **✓** | **✓** |
+| What exists today | What it remembers | What it misses |
+| :--- | :--- | :--- |
+| **Text memory systems** (ChatGPT Memory, Mem0-style) | Conversations and facts you stated | Everything you never typed — the scene, the objects, what was said out loud |
+| **Live multimodal assistants** (Gemini Live, Ray-Ban Meta) | The current scene | Anything before this session — no durable episodic or semantic memory |
+| **Video memory systems** (egocentric research systems, video archives) | Recorded history you search afterwards | Real-time interaction, and evidence tied to a timestamped moment |
 
-**✓** implemented as an explicit first-class component · **Partial** limited, implicit, offline, session-level, or modality-restricted · **—** not explicitly supported or not publicly described. Adapted from the [LightMem-Ego paper](https://arxiv.org/abs/2607.11487). *Phone was the paper's evaluation client — the open-source clients are the browser frontend and the Rokid AI Glasses app.*
+**LightMem-Ego keeps all three at once:** current, short-term and long-term memory on one aligned timeline, every answer carrying the timestamped visual evidence behind it, on smart glasses and in the browser.
+
+A capability-by-capability comparison against ten representative systems is in [How It Compares](#comparison).
 
 ---
 
@@ -185,9 +180,21 @@ Representative commercial assistants, text-based memory systems, and egocentric 
 ## 🚀 Quick Start
 
 > [!IMPORTANT]
-> **Bring two things:** an OpenAI-compatible LLM endpoint (base URL, API key, model names), and [Xfyun](https://www.xfyun.cn/) ASR credentials if you want speech transcribed. Local embedding models and a GPU are optional — the Docker stack starts without them.
+> Every path except the hosted demo needs an OpenAI-compatible LLM endpoint (base URL, API key, model names). Speech goes through the [Xfyun](https://www.xfyun.cn/) WebAPI, so add those credentials as well. Model weights and a GPU are optional.
 
-### Option 1 — Docker (recommended)
+| Path | Setup | Visual retrieval | Best for |
+| :--- | :--- | :--- | :--- |
+| 🌐 **[Live demo](https://lightmem-ego.zjukg.cn/)** | none | full, hosted | Seeing what it does |
+| 🐳 **[CPU smoke test](#smoke-test)** | Docker | `mock` | Confirming the stack runs |
+| ⚡ **[Full retrieval](#full-retrieval)** | Docker + GPU profile | real (VLM2Vec) | Memory over your own footage |
+| 👓 **[Rokid glasses](#rokid-glasses)** | APK + a backend | from your backend | The wearable experience |
+
+> [!WARNING]
+> The smoke test runs with `EM2MEM_VISUAL_BACKEND=mock` and `EM2MEM_TEXT_EMBED_BACKEND=local`. The UI comes up, but there is **no real visual or text retrieval**, so answers will not match the [demo](#demo). Use the full profile for that.
+
+<span id="smoke-test"></span>
+
+### 🐳 CPU smoke test
 
 ```bash
 git clone https://github.com/zjunlp/LightMem-Ego.git
@@ -196,14 +203,53 @@ cp deploy/.env.example .env     # fill in your LLM endpoint, keys, and model nam
 docker compose up --build
 ```
 
-Open **http://localhost:8080**. The web container proxies `/api` to the backend, so no CORS setup is needed.
+Open **http://localhost:8080**. The web container proxies `/api` to the backend, so no CORS setup is needed. The first build takes a few minutes.
 
-> [!NOTE]
-> The first build takes a few minutes. Visual embeddings default to `mock` so the stack starts without model weights — enable the GPU profiles in [`deploy/DOCKER.md`](deploy/DOCKER.md) for full visual and text retrieval.
+<span id="full-retrieval"></span>
 
-See [`deploy/DOCKER.md`](deploy/DOCKER.md) for optional GPU model services, SRS/RTMP live ingest, and data persistence.
+### ⚡ Full multimodal retrieval
 
-### Option 2 — Run the components directly
+The full stack needs a VLM2Vec visual encoder and a Qwen3 text embedder. The `models` profile runs both as containers:
+
+```bash
+docker compose --profile models up --build
+```
+
+Then point the backend at them in `.env`:
+
+```bash
+EM2MEM_VISUAL_BACKEND=remote
+EM2MEM_TEXT_EMBED_BACKEND=remote
+```
+
+On a GPU host, add the override so the workers get the GPU as well:
+
+```bash
+docker compose -f compose.yaml -f compose.gpu.yaml --profile models up --build
+```
+
+This needs the NVIDIA Container Toolkit and model directories matching the paths in `.env` — see [`deploy/DOCKER.md`](deploy/DOCKER.md) for GPU services, SRS/RTMP live ingest, and data persistence.
+
+<span id="rokid-glasses"></span>
+
+### 👓 Rokid AI Glasses
+
+Install the released APK:
+
+```bash
+adb install -r app-release.apk
+```
+
+Or build it (JDK + Android SDK):
+
+```bash
+cd src/ai_glass_app
+./gradlew assembleDebug        # Windows: .\gradlew.bat assembleDebug
+```
+
+Set `API_BASE_URL` in [`LightMemEgoConfig.kt`](src/ai_glass_app/app/src/main/java/cn/zjukg/lightmem/glass/lightmem_ego/LightMemEgoConfig.kt) to your own backend — it points at our demo server by default. Details: [`src/ai_glass_app/README.md`](src/ai_glass_app/README.md).
+
+### Building from source
 
 <details>
 <summary><b>Web frontend</b> (Node.js + npm)</summary>
@@ -237,29 +283,6 @@ scripts/start_online_all_workers.sh
 ```
 
 Details: [`src/backend/README.md`](src/backend/README.md) and [`DEPLOYMENT.md`](src/backend/DEPLOYMENT.md).
-
-</details>
-
-<details>
-<summary><b>Rokid AI Glass app</b> (install the APK, or build from source)</summary>
-
-Install the released APK:
-
-```bash
-adb install -r app-release.apk
-```
-
-Or build it yourself (JDK + Android SDK):
-
-```bash
-cd src/ai_glass_app
-./gradlew assembleDebug        # Windows: .\gradlew.bat assembleDebug
-```
-
-Point the app at your backend in
-[`LightMemEgoConfig.kt`](src/ai_glass_app/app/src/main/java/cn/zjukg/lightmem/glass/lightmem_ego/LightMemEgoConfig.kt).
-
-Details: [`src/ai_glass_app/README.md`](src/ai_glass_app/README.md)
 
 </details>
 
@@ -359,6 +382,30 @@ Against the strongest baseline (WorldMM, reproduced under the same evaluation se
 | Total tokens | **15.27M** | 42.03M | 63.7% fewer |
 
 EM²Mem moves multimodal alignment and graph organization into offline memory construction, so inference reads from pre-built event-indexed memory cells instead of re-aligning isolated fragments. Full per-category tables are in the [backend README](src/backend/README.md#results); reproduction scripts in [`experiments/egolife`](https://github.com/zjunlp/LightMem/tree/main/experiments/egolife#results).
+
+---
+
+<span id="comparison"></span>
+
+## 🆚 How It Compares
+
+Representative commercial assistants, text-based memory systems, and egocentric multimodal assistants. This compares publicly described capabilities rather than measured performance.
+
+| System | Platform & input | Real-time A/V stream | Current / short-term MM memory | Long-term episodic | Long-term semantic | Timestamped evidence |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| ChatGPT Memory | Text chat | — | — | — | Partial | — |
+| Mem0-style memory | Text and agent memory | — | Partial | — | ✓ | Partial |
+| Memories.ai | Video archives and visual memory | Partial | Partial | ✓ | Partial | Partial |
+| Gemini Live | Phone | ✓ | Partial | — | — | — |
+| Ray-Ban Meta AI Glasses | Glasses | Partial | Partial | — | — | — |
+| Vinci | Phone or wearable camera | ✓ | ✓ | Partial | Partial | Partial |
+| VisualClaw | Streaming video with agent workspace | Partial | Partial | — | Partial | Partial |
+| VisionClaw | Smart glasses | ✓ | Partial | — | — | Partial |
+| Egocentric Co-Pilot | Smart glasses with web agents | ✓ | ✓ | Partial | Partial | Partial |
+| EgoButler | AI-glasses egocentric video and audio | Partial | Partial | Partial | Partial | ✓ |
+| **LightMem-Ego** | **Phone and glasses-style client** | **✓** | **✓** | **✓** | **✓** | **✓** |
+
+**✓** implemented as an explicit first-class component · **Partial** limited, implicit, offline, session-level, or modality-restricted · **—** not explicitly supported or not publicly described. Adapted from the [LightMem-Ego paper](https://arxiv.org/abs/2607.11487). *Phone was the paper's evaluation client — the open-source clients are the browser frontend and the Rokid AI Glasses app.*
 
 ---
 
