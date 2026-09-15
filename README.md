@@ -76,24 +76,26 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 <p align="center">
   <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><img src="./figs/demo.gif" width="85%" alt="Asking the glasses where a plastic bottle was placed, and receiving a memory-grounded answer on the HUD"></a>
   <br>
-  <sub>Ask on the glasses → a memory-grounded answer on the HUD. Full demo:
+  Ask on the glasses → a memory-grounded answer on the HUD. Full demo:
   <a href="https://www.youtube.com/watch?v=BZuIxn00xlc">YouTube</a> ·
-  <a href="https://www.bilibili.com/video/BV1oANw62EA3/">Bilibili</a></sub>
+  <a href="https://www.bilibili.com/video/BV1oANw62EA3/">Bilibili</a>
 </p>
 
 <table align="center">
   <tr>
-    <td align="center" width="33%">
-      <img src="./src/ai_glass_app/assets/glass_1_01.png" width="210" alt="Asking a question on Rokid AI Glasses">
-      <br><sub><b>Hands-free on Rokid AI Glasses</b><br>Ask by voice or preset question</sub>
+    <td align="center" width="50%">
+      <img src="./src/ai_glass_app/assets/glass_1_01.png" width="250" alt="Asking a question on Rokid AI Glasses">
+      <br><b>Hands-free on Rokid AI Glasses</b><br>Ask by voice or preset question
     </td>
-    <td align="center" width="33%">
-      <img src="./src/ai_glass_app/assets/demo_slide7_cropped_for_emnlp_01.png" width="210" alt="Memory-grounded answer over a real-world scene">
-      <br><sub><b>Answers grounded in memory</b><br>Timestamps + visual evidence</sub>
+    <td align="center" width="50%">
+      <img src="./src/ai_glass_app/assets/demo_slide7_cropped_for_emnlp_01.png" width="250" alt="Memory-grounded answer over a real-world scene">
+      <br><b>Answers grounded in memory</b><br>Timestamps + visual evidence
     </td>
-    <td align="center" width="33%">
-      <img src="./src/ai_glass_app/assets/frontend_rokid.png" width="320" alt="Asking typed questions about the same session">
-      <br><sub><b>Same session on the web</b><br>Type questions when speaking isn't convenient</sub>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">
+      <img src="./src/ai_glass_app/assets/frontend_rokid.png" width="620" alt="Asking typed questions about the same live session from the web">
+      <br><b>Same session on the web</b><br>Type questions when speaking isn't convenient
     </td>
   </tr>
 </table>

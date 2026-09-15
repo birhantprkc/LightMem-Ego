@@ -25,12 +25,12 @@ The app uses standard Android APIs — Jetpack Compose UI, CameraX frame capture
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="assets/demo_slide7_cropped_for_emnlp_01.png" alt="Rokid AI Glass demo view showing a LightMem-Ego answer over the user's real-world scene" width="260" />
-      <br><sub><b>User perspective</b><br>An answer over the real-world scene</sub>
+      <img src="assets/demo_slide7_cropped_for_emnlp_01.png" alt="Rokid AI Glass demo view showing a LightMem-Ego answer over the user's real-world scene" width="300" />
+      <br><b>User perspective</b><br>An answer over the real-world scene
     </td>
     <td align="center" width="50%">
-      <img src="assets/glass_1_01.png" alt="LightMem-Ego glasses UI showing an audio question, answer page, latency, and touch controls" width="260" />
-      <br><sub><b>Glasses app UI</b><br>Question, answer page, latency, and touch controls</sub>
+      <img src="assets/glass_1_01.png" alt="LightMem-Ego glasses UI showing an audio question, answer page, latency, and touch controls" width="300" />
+      <br><b>Glasses app UI</b><br>Question, answer page, latency, and touch controls
     </td>
   </tr>
 </table>
