@@ -13,11 +13,11 @@
   <a href="README_DEPLOY.md">Deployment Notes</a>
 </p>
 
-A Vite + React single-page app for the [LightMem-Ego](../../README.md) memory system. Capture from your browser camera and microphone, drive live sessions, ask questions about the current or a past moment, and inspect the timestamped evidence behind every answer.
+A Vite + React single-page app for the [LightMem-Ego](../../README.md) memory system. Capture from your browser camera and microphone — on a laptop or a phone — drive live sessions, ask questions about the current or a past moment, and inspect the timestamped evidence behind every answer.
 
 ## ✨ Features
 
-- **Browser A/V capture** — start and stop a live session using the camera and microphone, and stream frames and audio chunks to the backend.
+- **Browser A/V capture** — start and stop a live session using the camera and microphone, on desktop or in a phone browser, and stream frames and audio chunks to the backend.
 - **Live session view** — watch the current session, its pipeline state, and stream status as memory is built.
 - **Ask panel** — submit typed questions and render memory-grounded answers, including token-by-token streaming replies.
 - **Evidence strip** — open the frames, transcripts, and timestamps that support each answer.
@@ -100,7 +100,7 @@ The full contract is documented in [`../backend/docs/online_stream_api_contract.
 
 ## 🩺 Troubleshooting
 
-- **Camera or microphone is blocked.** Browsers only allow `getUserMedia` on `localhost` or over HTTPS. Use `http://localhost:5173` locally, or serve the build over HTTPS.
+- **Camera or microphone is blocked.** Browsers only allow `getUserMedia` on `localhost` or over HTTPS. Use `http://localhost:5173` locally, or serve the build over HTTPS. A phone has no `localhost` exemption, so testing the mobile-browser path needs HTTPS.
 - **Requests fail with a CORS error.** Add the frontend origin to `EM2MEM_CORS_ORIGINS` in the backend `.env` and restart the API.
 - **The UI loads but answers never arrive.** Confirm a query worker is running (`scripts/start_online_query_worker.sh`) and that the session status endpoint returns an active session.
 - **`/api` requests hit the wrong host.** `VITE_API_BASE_URL` is baked in at build time — rebuild after changing it.

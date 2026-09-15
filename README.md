@@ -85,7 +85,7 @@
 Ask the glasses a question in the middle of your day, and get an answer grounded in what you actually saw and heard. Prefer typing? Join the same live session from the web page.
 
 > [!TIP]
-> **No hardware? Try it right now.** The [live web demo](https://lightmem-ego.zjukg.cn/) runs the full LightMem-Ego workflow in your browser — no glasses and no local installation.
+> **No hardware? Try it right now.** The [live web demo](https://lightmem-ego.zjukg.cn/) runs the full LightMem-Ego workflow in your browser — on a phone too, where it captures from the phone's own camera and microphone. No glasses, no local installation.
 
 <p align="center">
   <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><img src="./figs/demo.gif" width="85%" alt="Asking the glasses where a plastic bottle was placed, and receiving a memory-grounded answer on the HUD"></a>
@@ -328,7 +328,7 @@ The backend divides each session into short event anchors and stores multimodal 
 ### End-to-end system — LightMem-Ego
 
 > [!NOTE]
-> These numbers come from a small-batch everyday-life dataset we collected with the **phone and glasses client profiles used in the paper** — the open-source clients are the browser frontend and the Rokid AI Glasses app. Not a public leaderboard; all latencies are end-to-end (question → answer). Reported in the [LightMem-Ego paper](https://arxiv.org/abs/2607.11487).
+> These numbers come from a small-batch everyday-life dataset we collected with the **phone and glasses client profiles used in the paper**. In the open-source release the phone client is the web frontend running in a **mobile browser**, capturing from the phone's own camera and microphone — a native app is on the [roadmap](#roadmap). Not a public leaderboard; all latencies are end-to-end (question → answer). Reported in the [LightMem-Ego paper](https://arxiv.org/abs/2607.11487).
 
 **Retrieval accuracy** — Recall@k over the retrieved memory entries, with MRR for the first relevant hit:
 
@@ -438,6 +438,7 @@ Representative commercial assistants, text-based memory systems, and egocentric 
 
 ## 🗺️ Roadmap
 
+- [ ] Ship a native phone app — today the phone client is the web frontend in a mobile browser.
 - [ ] Release the end-to-end evaluation dataset and reproducibility scripts.
 - [ ] Pluggable ASR, VLM, and embedding backends beyond the current defaults.
 - [ ] Support wearable devices beyond Rokid AI Glass.
