@@ -283,27 +283,6 @@ The backend divides each session into short event anchors and stores multimodal 
 
 *EM²Mem in one picture. A video is segmented into 30-second event anchors, and each anchor becomes a memory cell holding dense captions, transcripts, keyframes, and metadata. Episodic and semantic graphs link those cells, and retrieval reads grounded evidence from them instead of re-aligning raw fragments at query time.*
 
-### Query lifecycle
-
-```mermaid
-%%{init: {"theme":"base","themeVariables":{"fontFamily":"Helvetica, Arial, sans-serif","fontSize":"13px","lineColor":"#8593A5","actorBkg":"#EEF3F9","actorBorder":"#2C5C8A","actorTextColor":"#12283F","signalColor":"#5B6B7F","signalTextColor":"#12283F","sequenceNumberColor":"#FFFFFF"}}}%%
-sequenceDiagram
-    autonumber
-    participant U as User
-    participant C as Glasses or web client
-    participant B as Backend
-    participant M as Memory tiers
-
-    U->>C: "Where did I place my bottle?"
-    C->>B: POST /ask/{session_id}
-    B->>B: Route the query to the matching memory tier
-    B->>M: Retrieve captions, transcripts, frames
-    M-->>B: Timestamped evidence
-    B->>B: Pack a compact evidence view
-    B-->>C: Grounded answer, streamed
-    C-->>U: Answer on the HUD
-```
-
 ---
 
 <span id="results"></span>
