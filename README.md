@@ -20,9 +20,8 @@
 
 <p align="center">
   <a href="https://lightmem-ego.zjukg.cn/"><b>🌐 Try the Live Demo</b></a> &nbsp;·&nbsp;
-  <a href="https://github.com/zjunlp/LightMem-Ego/releases/download/v1.0.0/app-release.apk"><b>📱 Download APK</b></a> &nbsp;·&nbsp;
-  <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><b>🎬 Bilibili</b></a> &nbsp;·&nbsp;
-  <a href="https://www.youtube.com/watch?v=BZuIxn00xlc"><b>📺 YouTube</b></a>
+  <a href="https://github.com/zjunlp/LightMem-Ego/releases/download/v1.0.0/app-release.apk"><b>📱 Download the Glasses APK</b></a> &nbsp;·&nbsp;
+  <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><b>🎬 Watch the Demo</b></a>
 </p>
 
 <h5 align="center">⭐ If LightMem-Ego is useful to you, please give us a star — it really helps!</h5>
@@ -81,6 +80,11 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 <div align="center">
   <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><picture><source media="(prefers-color-scheme: dark)" srcset="./figs/demo_caption_dark.png"><img src="./figs/demo_caption.png" width="81%" alt="Ask on the glasses, get a memory-grounded answer on the HUD — watch the full demo."></picture></a>
 </div>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=BZuIxn00xlc"><img src="https://img.shields.io/badge/Watch_on-YouTube-FF0000?logo=youtube&logoColor=white&style=for-the-badge" alt="Watch the full demo on YouTube"></a>
+  <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><img src="https://img.shields.io/badge/Watch_on-Bilibili-00A1D6?logo=bilibili&logoColor=white&style=for-the-badge" alt="Watch the full demo on Bilibili"></a>
+</p>
 
 <table align="center">
   <tr>
