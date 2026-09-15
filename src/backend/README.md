@@ -9,7 +9,7 @@
 
 The FastAPI service and worker pipeline behind [LightMem-Ego](../../README.md). It accepts a full video upload, chunked or realtime frame/audio streams, and live RTMP/WHIP ingest; builds current, short-term, and long-term multimodal memory; and answers questions with timestamped evidence.
 
-The installable package is named `em2mem-online-server`. The long-term memory tier (`M_lt`) is built by **EM²Mem** — our event-centric multimodal memory framework, accepted at **EMNLP 2026** ([arXiv:2609.00551](https://arxiv.org/abs/2609.00551)).
+The installable package is named `em2mem-online-server`. The long-term memory tier (`M_lt`) is built by **EM²Mem** — our event-centric multimodal memory framework, accepted at **EMNLP 2026 Findings** ([arXiv:2609.00551](https://arxiv.org/abs/2609.00551)).
 
 ## ✨ Capabilities
 
@@ -450,7 +450,7 @@ Runtime sessions, task queues, logs, generated indexes, FAISS files, uploads, an
 
 ## 📄 Citation And License
 
-If you use this backend in a paper or artifact, cite **LightMem-Ego**. The long-term memory tier (`M_lt`) is built by **EM²Mem** (accepted at **EMNLP 2026**), so cite it as well when you use that module.
+If you use this backend in a paper or artifact, cite **LightMem-Ego**. The long-term memory tier (`M_lt`) is built by **EM²Mem** (accepted at **EMNLP 2026 Findings**), so cite it as well when you use that module.
 
 ```bibtex
 @article{chen2026lightmemego,

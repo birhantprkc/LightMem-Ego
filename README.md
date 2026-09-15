@@ -18,7 +18,7 @@
   <a href="https://arxiv.org/abs/2609.00551">
     <img src="https://img.shields.io/badge/EM%C2%B2Mem-2609.00551-b31b1b?logo=arxiv&logoColor=white" alt="EM²Mem paper">
   </a>
-  <img src="https://img.shields.io/badge/EMNLP%202026-Accepted-blueviolet" alt="EMNLP 2026">
+  <img src="https://img.shields.io/badge/EMNLP%202026%20Findings-Accepted-blueviolet" alt="EMNLP 2026 Findings">
   <a href="https://github.com/zjunlp/LightMem-Ego">
     <img src="https://img.shields.io/github/stars/zjunlp/LightMem-Ego?style=social" alt="GitHub Stars">
   </a>
@@ -79,7 +79,7 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 ## 📢 News
 
 - **[2026-09]** ✨ Multi-session support, online memory editing, and streaming answers land in the backend and web UI.
-- **[2026-08]** 🎉🎉🎉 [**EM²Mem: Event-Centric Multimodal Memory for Large Language Models**](https://arxiv.org/abs/2609.00551) — the long-term memory engine behind this backend — has been accepted by **EMNLP 2026**!
+- **[2026-08]** 🎉🎉🎉 [**EM²Mem: Event-Centric Multimodal Memory for Large Language Models**](https://arxiv.org/abs/2609.00551) — the long-term memory engine behind this backend — has been accepted to **EMNLP 2026 Findings**!
 - **[2026-07-13]** 📄 [**LightMem-Ego: Your AI Memory for Everyday Life**](https://arxiv.org/abs/2607.11487) is released on arXiv.
 - **[2026-07]** 📦 **v1.0.0 released** — [download the Rokid AI Glass APK](https://github.com/zjunlp/LightMem-Ego/releases/tag/v1.0.0) and reproduce the full stack with [Docker](https://github.com/zjunlp/LightMem-Ego/blob/main/deploy/DOCKER.md).
 - **[2026-05]** 🎉 [**LightMem-Ego: Your AI Memory for Everyday Life**](https://github.com/zjunlp/LightMem-Ego) is open-sourced.
@@ -238,7 +238,7 @@ Browser (web) ────┘                 current  short   long
 | **`M_st`** short-term memory | Recent micro-events, actions, and conversations | "What did she just tell me?" |
 | **`M_lt`** long-term memory | Consolidated episodes, routines, preferences, semantic facts | "What do I usually do on Fridays?" |
 
-The backend divides each session into short event anchors and stores multimodal evidence per anchor. The long-term tier (`M_lt`) is built by **EM²Mem**, our event-centric multimodal memory framework (EMNLP 2026, [arXiv:2609.00551](https://arxiv.org/abs/2609.00551)): events are the retrieval unit, and episodic and semantic graphs link them across a session. At query time the system retrieves aligned event-level evidence — captions, transcripts, frames, timestamps — instead of reconstructing context at inference.
+The backend divides each session into short event anchors and stores multimodal evidence per anchor. The long-term tier (`M_lt`) is built by **EM²Mem**, our event-centric multimodal memory framework (EMNLP 2026 Findings, [arXiv:2609.00551](https://arxiv.org/abs/2609.00551)): events are the retrieval unit, and episodic and semantic graphs link them across a session. At query time the system retrieves aligned event-level evidence — captions, transcripts, frames, timestamps — instead of reconstructing context at inference.
 
 ---
 
@@ -348,7 +348,7 @@ If you find LightMem-Ego useful, please cite our paper:
 }
 ```
 
-The long-term memory tier (`M_lt`) of the backend is built by **EM²Mem**, which has been accepted by **EMNLP 2026**. Please cite it as well when you use that module:
+The long-term memory tier (`M_lt`) of the backend is built by **EM²Mem**, which has been accepted to **EMNLP 2026 Findings**. Please cite it as well when you use that module:
 
 ```bibtex
 @article{chen2026em2mem,
@@ -369,7 +369,7 @@ This repository belongs to the ZJUNLP **LightMem** series, which targets context
 
 - [LightMem](https://github.com/zjunlp/LightMem) — a lightweight and efficient memory management framework for LLMs and AI agents
 - [LightRSI](https://github.com/zjunlp/LightRSI) — a modular framework for recursive improvement in long-horizon LLM agents
-- [EM²Mem](https://arxiv.org/abs/2609.00551) **(EMNLP 2026)** — event-centric multimodal memory for long-video QA, and the long-term memory engine behind this system ([code overview](https://github.com/zjunlp/LightMem/blob/main/EM2Mem.md))
+- [EM²Mem](https://arxiv.org/abs/2609.00551) **(EMNLP 2026 Findings)** — event-centric multimodal memory for long-video QA, and the long-term memory engine behind this system ([code overview](https://github.com/zjunlp/LightMem/blob/main/EM2Mem.md))
 
 ---
 
