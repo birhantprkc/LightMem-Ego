@@ -78,7 +78,7 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 </p>
 
 <div align="center">
-  <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><picture><source media="(prefers-color-scheme: dark)" srcset="./figs/demo_caption_v2_dark.png"><img src="./figs/demo_caption_v2.png" width="81%" alt="Ask on the glasses, get a memory-grounded answer on the HUD — watch the full demo."></picture></a>
+  <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><picture><source media="(prefers-color-scheme: dark)" srcset="./figs/demo_caption_v3_dark.png"><img src="./figs/demo_caption_v3.png" width="81%" alt="Ask on the glasses, get a memory-grounded answer on the HUD — watch the full demo."></picture></a>
 </div>
 
 <p align="center">
