@@ -1,7 +1,7 @@
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../../figs/logo_dark.png">
-    <img src="../../figs/lightmem_ego_crop.png" width="220" alt="LightMem-Ego">
+    <source media="(prefers-color-scheme: dark)" srcset="../../figs/lockup_compact_dark.png">
+    <img src="../../figs/lockup_compact.png" width="300" alt="LightMem-Ego">
   </picture>
 </div>
 
