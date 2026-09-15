@@ -6,7 +6,7 @@
 </div>
 
 <p align="center">
-  <b>An open-source, self-hostable multimodal memory system for smart glasses and the browser.</b>
+  <b>An open-source, self-hostable multimodal memory system for smart glasses and phones.</b>
 </p>
 
 <p align="center">
@@ -121,8 +121,8 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./figs/feature_strip_dark.png">
-    <img src="./figs/feature_strip.png" width="100%" alt="Runs on glasses and in the browser; self-hostable; timestamped evidence; three-tier memory">
+    <source media="(prefers-color-scheme: dark)" srcset="./figs/feature_strip_v2_dark.png">
+    <img src="./figs/feature_strip_v2.png" width="100%" alt="Runs on glasses and phones; self-hostable; timestamped evidence; three-tier memory">
   </picture>
 </div>
 
@@ -134,7 +134,7 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 
 ## 🎯 Why LightMem-Ego
 
-- 🎥 **Always-on egocentric capture** — streams first-person camera frames and microphone audio from Rokid AI Glasses or a browser.
+- 🎥 **Always-on egocentric capture** — streams first-person camera frames and microphone audio from Rokid AI Glasses or a phone.
 - 🧠 **Three-tier memory** — a rolling *current* memory, *short-term* micro-events, and consolidated *long-term* episodes, routines, and preferences.
 - ⏱️ **One aligned timeline** — frames, audio chunks, ASR transcripts and metadata all share a single session timeline.
 - 🔍 **Memory-grounded answers** — every answer ships with the timestamped visual and transcript evidence behind it.
