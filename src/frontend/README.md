@@ -27,7 +27,10 @@ A Vite + React single-page app for the [LightMem-Ego](../../README.md) memory sy
 
 ## 🚀 Quick Start
 
-**Requirements:** Node.js 18+ and npm, plus a reachable LightMem-Ego backend.
+> [!IMPORTANT]
+> This app needs a reachable LightMem-Ego [backend](../backend/README.md). On its own it can capture video, but it cannot build memory or answer questions. Want to skip setup? Use the [live demo](https://lightmem-ego.zjukg.cn/) instead.
+
+**Requirements:** Node.js 18+ and npm.
 
 ```bash
 cd src/frontend/online_web
@@ -52,7 +55,8 @@ The backend must allow your dev origin — `EM2MEM_CORS_ORIGINS` in the backend 
 | `VITE_API_BASE_URL` | `/api` | Backend API base URL. The relative default works when a proxy (Nginx or the Docker frontend container) maps `/api` to the backend. |
 | `VITE_DEMO_API_BASE_URL` | value of `VITE_API_BASE_URL` | Optional separate base URL for the demo upload/test endpoints. |
 
-Both are read at **build time** by `import.meta.env`, so rebuild after changing them. `.env.local` is Git-ignored.
+> [!NOTE]
+> Both variables are read at **build time** by `import.meta.env`, so you must rebuild after changing them — restarting the dev server is not enough. `.env.local` is Git-ignored.
 
 ## 📜 Scripts
 
@@ -112,4 +116,5 @@ npm run build
 
 Serve `online_web/dist/` with a reverse proxy that forwards `/api` to the backend, and terminate TLS so camera and microphone access keep working. See [`README_DEPLOY.md`](README_DEPLOY.md) and [`deploy/nginx-online-web.conf.example`](deploy/nginx-online-web.conf.example).
 
-The Docker stack at the repository root already builds and serves this frontend on port 8080 — see [`deploy/DOCKER.md`](../../deploy/DOCKER.md).
+> [!TIP]
+> The Docker stack at the repository root builds and serves this frontend on port 8080 alongside the backend — the fastest route to a working deployment. See [`deploy/DOCKER.md`](../../deploy/DOCKER.md).

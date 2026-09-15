@@ -59,7 +59,8 @@ The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Release builds need a signing keystore, which is not included in this repository.
+> [!WARNING]
+> Release builds need a signing keystore, which is **not** included in this repository — only debug builds work out of the box.
 
 ## 🚀 Requirements
 
@@ -93,7 +94,8 @@ There are two ways to ask:
 - **Preset questions** — double click the touchpad to cycle through them, then click to ask the selected one.
 - **Voice questions** — push the physical button to start recording, then push it again to stop and submit.
 
-If speaking isn't convenient, ask from the web page instead. Select the **Rokid** mode (not *Rokid RTMP*, which is for testing other functions) and start — it connects to the same session running on the glasses:
+> [!TIP]
+> Speaking isn't the only way in. Open the [web page](https://lightmem-ego.zjukg.cn/), select the **Rokid** mode (not *Rokid RTMP*, which is for testing other functions) and start — it joins the same live session running on the glasses, so you can type instead:
 
 <img src="assets/frontend_rokid.png" alt="Asking questions about the live glasses session from the web page" />
 
@@ -121,6 +123,9 @@ Backend endpoint, input mode, preset questions, and capture rates live in one fi
 | `FRAME_INTERVAL_MS` | `1000` | Frame upload cadence. |
 | `AUDIO_CHUNK_MS` | `1000` | Audio chunk length. |
 | `ANSWER_TTS_ENABLED` | `false` | Set `true` to speak answers aloud. |
+
+> [!IMPORTANT]
+> `API_BASE_URL` points at our hosted demo server by default. Change it to your own backend before capturing anything you would not want to upload elsewhere.
 
 The backend must be started with `input_mode=rokid_frame_audio`, and it never calls the Rokid SDK — it reuses the standard stream, current-memory, short-term-memory, and query paths. See [`../backend/README.md`](../backend/README.md) for the API contract and timestamp rule.
 

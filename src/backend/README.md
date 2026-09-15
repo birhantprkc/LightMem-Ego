@@ -30,6 +30,9 @@ The installable package is named `em2mem-online-server`. The long-term memory ti
 
 ## 🚀 Quick Start
 
+> [!IMPORTANT]
+> Two things are required: an OpenAI-compatible LLM endpoint (base URL, API key, model names), and Xfyun ASR credentials if you want speech transcribed. A GPU and local model weights are optional.
+
 ### Docker (recommended)
 
 The root Compose stack builds this backend, its workers, and the web frontend, and configures Xfyun ASR plus mock visual embeddings so it starts without model weights:
@@ -38,6 +41,9 @@ The root Compose stack builds this backend, its workers, and the web frontend, a
 cp deploy/.env.example .env     # fill in your LLM endpoint, keys, and model names
 docker compose up --build
 ```
+
+> [!NOTE]
+> The first build takes a few minutes. Visual embeddings default to `mock` so the stack comes up without model weights; enable the GPU profiles for full visual and text retrieval.
 
 See [`deploy/DOCKER.md`](../../deploy/DOCKER.md) for GPU model services, SRS/RTMP live ingest, and data persistence.
 
@@ -263,7 +269,8 @@ EM2MEM_MST_EPISODIC_MODEL=gpt-5.4
 <details>
 <summary><b>ASR</b></summary>
 
-`EM2MEM_STREAM_ASR_BACKEND` / `EM2MEM_AUDIO_ASR_BACKEND` select the backend. The source `.env.example` defaults to `whisperx`; the Docker stack defaults to `xfyun`.
+> [!NOTE]
+> The two env files disagree on purpose: the source `.env.example` defaults to `whisperx` (a local GPU model), while the Docker stack defaults to `xfyun` (a hosted WebAPI). Pick deliberately — `EM2MEM_STREAM_ASR_BACKEND` / `EM2MEM_AUDIO_ASR_BACKEND` select it.
 
 ```bash
 EM2MEM_STREAM_ASR_BACKEND=whisperx      # or xfyun
@@ -443,7 +450,8 @@ pytest -q
 
 ## 🔐 Security And Data
 
-No secrets, `.env` files, certificates, tokens, model weights, or server-specific paths are included in this release. Provide credentials through environment variables or a deployment secret manager, and never commit `.env`.
+> [!WARNING]
+> Never commit `.env`. This release ships no secrets, environment files, certificates, tokens, model weights, or server-specific paths — supply credentials through environment variables or a deployment secret manager.
 
 Runtime sessions, task queues, logs, generated indexes, FAISS files, uploads, and media outputs are written to Git-ignored directories such as `online_sessions/`, `online_tasks/`, `runtime/`, and `logs/`, and are excluded from this release.
 
