@@ -71,7 +71,6 @@
 - [🗺️ Roadmap](#roadmap)
 - [📄 Citation](#citation)
 - [🔗 Related Projects](#related-works)
-- [👥 Contributors](#contributors)
 - [⚖️ License](#license)
 - [🔐 Privacy](#privacy)
 
@@ -274,28 +273,37 @@ Details: [`src/ai_glass_app/README.md`](src/ai_glass_app/README.md)
 </div>
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Helvetica, Arial, sans-serif","fontSize":"14px","lineColor":"#8593A5","primaryColor":"#FFFFFF","primaryTextColor":"#12283F","primaryBorderColor":"#8593A5","clusterBkg":"#FAFBFD","clusterBorder":"#D3DAE3"}}}%%
 flowchart LR
     subgraph capture["Capture"]
-        G["👓 Rokid AI Glasses"]
-        W["🌐 Web browser"]
+        G["Rokid AI Glasses"]
+        W["Web browser"]
     end
 
-    API["Stream API<br/>frames · audio · metadata"]
-    MCUR["M_cur<br/>current memory"]
-    MST["M_st<br/>short-term micro-events"]
-    MLT["M_lt<br/>long-term memory<br/>EM²Mem"]
-    RET["Query router<br/>+ evidence retrieval"]
-    ANS["Grounded answer<br/>+ timestamped evidence"]
+    subgraph tiers["Hierarchical memory"]
+        MCUR["M_cur · current"]
+        MST["M_st · short-term"]
+        MLT["M_lt · long-term (EM²Mem)"]
+    end
 
-    G -->|"first-person A/V"| API
-    W -->|"first-person A/V"| API
-    API --> MCUR --> MST --> MLT
+    API["Stream API<br/>frames, audio, metadata"]
+    RET["Query router<br/>and evidence retrieval"]
+    ANS["Grounded answer<br/>with timestamped evidence"]
+
+    G --> API
+    W --> API
+    API --> MCUR
+    MCUR --> MST
+    MST --> MLT
     MCUR --> RET
     MST --> RET
     MLT --> RET
     RET --> ANS
-    ANS -.->|"back to the device"| G
-    ANS -.-> W
+
+    classDef tier fill:#EEF3F9,stroke:#2C5C8A,stroke-width:1px,color:#12283F
+    classDef plain fill:#FFFFFF,stroke:#8593A5,stroke-width:1px,color:#12283F
+    class MCUR,MST,MLT tier
+    class API,RET,ANS plain
 ```
 
 | Memory tier | Scope | Example |
@@ -315,21 +323,22 @@ The backend divides each session into short event anchors and stores multimodal 
 ### Query lifecycle
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Helvetica, Arial, sans-serif","fontSize":"13px","lineColor":"#8593A5","actorBkg":"#EEF3F9","actorBorder":"#2C5C8A","actorTextColor":"#12283F","signalColor":"#5B6B7F","signalTextColor":"#12283F","sequenceNumberColor":"#FFFFFF"}}}%%
 sequenceDiagram
     autonumber
-    participant U as 👓 User
-    participant A as Glasses / web client
+    participant U as User
+    participant C as Glasses or web client
     participant B as Backend
     participant M as Memory tiers
 
-    U->>A: "Where did I place my bottle?"
-    A->>B: POST /ask/{session_id}
-    B->>B: Route the query to the right memory tier
+    U->>C: "Where did I place my bottle?"
+    C->>B: POST /ask/{session_id}
+    B->>B: Route the query to the matching memory tier
     B->>M: Retrieve captions, transcripts, frames
     M-->>B: Timestamped evidence
     B->>B: Pack a compact evidence view
-    B-->>A: Grounded answer (streamed)
-    A-->>U: Answer on the HUD
+    B-->>C: Grounded answer, streamed
+    C-->>U: Answer on the HUD
 ```
 
 ---
@@ -479,26 +488,6 @@ This repository belongs to the ZJUNLP **LightMem** series, which targets context
 ## 🙏 Acknowledgements
 
 LightMem-Ego builds on the broader line of work on memory-augmented agents, egocentric multimodal understanding, and wearable AI assistants. We thank all contributors and collaborators who helped develop the system.
-
----
-
-<span id="contributors"></span>
-
-## 👥 Contributors
-
-Thanks to everyone who has contributed to LightMem-Ego. Issues and pull requests are welcome — see the [contributors graph](https://github.com/zjunlp/LightMem-Ego/graphs/contributors) for the full list.
-
-<div align="center">
-  <a href="https://github.com/zjunlp/LightMem-Ego/graphs/contributors">
-    <img src="https://img.shields.io/github/contributors/zjunlp/LightMem-Ego?color=blue&label=contributors" alt="Contributors">
-  </a>
-  <a href="https://github.com/zjunlp/LightMem-Ego/network/members">
-    <img src="https://img.shields.io/github/forks/zjunlp/LightMem-Ego?color=blue" alt="Forks">
-  </a>
-  <a href="https://github.com/zjunlp/LightMem-Ego/issues">
-    <img src="https://img.shields.io/github/issues/zjunlp/LightMem-Ego?color=blue" alt="Issues">
-  </a>
-</div>
 
 ---
 
