@@ -1,8 +1,9 @@
 <div align="center">
-  <img src="./figs/lightmem_ego_crop.png" width="52%" alt="LightMem-Ego Logo">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./figs/banner_dark.png">
+    <img src="./figs/banner.png" width="100%" alt="LightMem-Ego: Your AI Memory for Everyday Life">
+  </picture>
 </div>
-
-<h1 align="center">LightMem-Ego: Your AI Memory for Everyday Life</h1>
 
 <p align="center">
   <b>Stream first-person video &amp; audio from smart glasses or your browser, then ask anything about what you saw and heard.</b>
@@ -30,12 +31,51 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/React%2019-61DAFB?logo=react&logoColor=black" alt="React 19">
+  <img src="https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white" alt="Vite">
+  <img src="https://img.shields.io/badge/Android-3DDC84?logo=android&logoColor=white" alt="Android">
+  <img src="https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white" alt="Docker">
+</p>
+
+<p align="center">
   <a href="https://lightmem-ego.zjukg.cn/"><b>🌐 Try the Live Demo</b></a> &nbsp;·&nbsp;
   <a href="https://github.com/zjunlp/LightMem-Ego/releases/download/v1.0.0/app-release.apk"><b>📱 Download the Glasses APK</b></a> &nbsp;·&nbsp;
   <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><b>🎬 Watch the Demo</b></a>
 </p>
 
 <h5 align="center">⭐ If LightMem-Ego is useful to you, please give us a star — it really helps!</h5>
+
+<table align="center">
+  <tr>
+    <td align="center" width="25%"><b>76.8</b><br><sub>Video-MME (L) accuracy</sub></td>
+    <td align="center" width="25%"><b>4.67×</b><br><sub>faster per query</sub></td>
+    <td align="center" width="25%"><b>100%</b><br><sub>R@3 · life summarization</sub></td>
+    <td align="center" width="25%"><b>3</b><br><sub>memory tiers, one timeline</sub></td>
+  </tr>
+</table>
+
+<details>
+<summary><b>📑 Table of contents</b></summary>
+
+- [🎬 Demo](#demo)
+- [📢 News](#news)
+- [✨ Highlights](#highlights)
+- [🆚 How It Compares](#comparison)
+- [💬 What You Can Ask](#scenarios)
+- [🚀 Quick Start](#quick-start)
+- [🏗️ How It Works](#architecture)
+- [📊 Results](#results)
+- [📦 Repository Layout](#repository-layout)
+- [🗺️ Roadmap](#roadmap)
+- [📄 Citation](#citation)
+- [🔗 Related Projects](#related-works)
+- [👥 Contributors](#contributors)
+- [⚖️ License](#license)
+- [🔐 Privacy](#privacy)
+
+</details>
 
 ---
 
@@ -44,6 +84,9 @@
 ## 🎬 Demo
 
 Ask the glasses a question in the middle of your day, and get an answer grounded in what you actually saw and heard. Prefer typing? Join the same live session from the web page.
+
+> [!TIP]
+> **No hardware? Try it right now.** The [live web demo](https://lightmem-ego.zjukg.cn/) runs the whole system in your browser — nothing to install.
 
 <p align="center">
   <a href="https://www.bilibili.com/video/BV1oANw62EA3/">
@@ -141,7 +184,8 @@ Representative commercial assistants, text-based memory systems, and egocentric 
 
 ## 🚀 Quick Start
 
-**What you need:** an OpenAI-compatible LLM endpoint (base URL, API key, model names). Audio transcription defaults to the Xfyun ASR WebAPI, so add Xfyun credentials to transcribe speech. Local embedding models and a GPU are optional — the Docker stack starts without them.
+> [!IMPORTANT]
+> **Bring two things:** an OpenAI-compatible LLM endpoint (base URL, API key, model names), and [Xfyun](https://www.xfyun.cn/) ASR credentials if you want speech transcribed. Local embedding models and a GPU are optional — the Docker stack starts without them.
 
 ### Option 1 — Docker (recommended)
 
@@ -153,6 +197,9 @@ docker compose up --build
 ```
 
 Open **http://localhost:8080**. The web container proxies `/api` to the backend, so no CORS setup is needed.
+
+> [!NOTE]
+> The first build takes a few minutes. Visual embeddings default to `mock` so the stack starts without model weights — enable the GPU profiles in [`deploy/DOCKER.md`](deploy/DOCKER.md) for full visual and text retrieval.
 
 See [`deploy/DOCKER.md`](deploy/DOCKER.md) for optional GPU model services, SRS/RTMP live ingest, and data persistence.
 
@@ -226,10 +273,29 @@ Details: [`src/ai_glass_app/README.md`](src/ai_glass_app/README.md)
   <img src="./figs/system_design.png" width="90%" alt="LightMem-Ego system design">
 </div>
 
-```text
-Rokid AI Glasses ─┐
-                  ├─► Stream API ─► M_cur ─► M_st ─► M_lt ─► Retrieval ─► Answer + Evidence
-Browser (web) ────┘                 current  short   long
+```mermaid
+flowchart LR
+    subgraph capture["Capture"]
+        G["👓 Rokid AI Glasses"]
+        W["🌐 Web browser"]
+    end
+
+    API["Stream API<br/>frames · audio · metadata"]
+    MCUR["M_cur<br/>current memory"]
+    MST["M_st<br/>short-term micro-events"]
+    MLT["M_lt<br/>long-term memory<br/>EM²Mem"]
+    RET["Query router<br/>+ evidence retrieval"]
+    ANS["Grounded answer<br/>+ timestamped evidence"]
+
+    G -->|"first-person A/V"| API
+    W -->|"first-person A/V"| API
+    API --> MCUR --> MST --> MLT
+    MCUR --> RET
+    MST --> RET
+    MLT --> RET
+    RET --> ANS
+    ANS -.->|"back to the device"| G
+    ANS -.-> W
 ```
 
 | Memory tier | Scope | Example |
@@ -240,6 +306,32 @@ Browser (web) ────┘                 current  short   long
 
 The backend divides each session into short event anchors and stores multimodal evidence per anchor. The long-term tier (`M_lt`) is built by **EM²Mem**, our event-centric multimodal memory framework (EMNLP 2026 Findings, [arXiv:2609.00551](https://arxiv.org/abs/2609.00551)): events are the retrieval unit, and episodic and semantic graphs link them across a session. At query time the system retrieves aligned event-level evidence — captions, transcripts, frames, timestamps — instead of reconstructing context at inference.
 
+<div align="center">
+  <img src="./figs/em2mem_architecture.png" width="100%" alt="EM²Mem architecture: event-centric memory schema, event-linked graph construction, and lightweight retrieval">
+</div>
+
+*EM²Mem in one picture. A video is segmented into 30-second event anchors, and each anchor becomes a memory cell holding dense captions, transcripts, keyframes, and metadata. Episodic and semantic graphs link those cells, and retrieval reads grounded evidence from them instead of re-aligning raw fragments at query time.*
+
+### Query lifecycle
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 👓 User
+    participant A as Glasses / web client
+    participant B as Backend
+    participant M as Memory tiers
+
+    U->>A: "Where did I place my bottle?"
+    A->>B: POST /ask/{session_id}
+    B->>B: Route the query to the right memory tier
+    B->>M: Retrieve captions, transcripts, frames
+    M-->>B: Timestamped evidence
+    B->>B: Pack a compact evidence view
+    B-->>A: Grounded answer (streamed)
+    A-->>U: Answer on the HUD
+```
+
 ---
 
 <span id="results"></span>
@@ -248,7 +340,8 @@ The backend divides each session into short event anchors and stores multimodal 
 
 ### End-to-end system — LightMem-Ego
 
-Measured on a small-batch everyday-life dataset collected with the phone and glasses clients, and reported in the [LightMem-Ego paper](https://arxiv.org/abs/2607.11487). All latencies are end-to-end (question → answer).
+> [!NOTE]
+> These numbers come from a small-batch everyday-life dataset we collected with the phone and glasses clients — not a public leaderboard. All latencies are end-to-end (question → answer). Reported in the [LightMem-Ego paper](https://arxiv.org/abs/2607.11487).
 
 **Retrieval accuracy** — Recall@k over the retrieved memory entries, with MRR for the first relevant hit:
 
@@ -283,6 +376,10 @@ Measured on a small-batch everyday-life dataset collected with the phone and gla
 
 *Glasses columns are the glasses-style client profile.*
 
+<div align="center">
+  <img src="./figs/chart_latency_breakdown.png" width="92%" alt="End-to-end latency by memory scope and client: retrieval versus answer generation, P50 and P90">
+</div>
+
 ### Long-term memory engine — EM²Mem
 
 The long-term tier (`M_lt`) is built by EM²Mem. Average accuracy (%) across three long-video and egocentric benchmarks, as reported in the EM²Mem paper:
@@ -303,6 +400,10 @@ Against the strongest baseline (WorldMM, reproduced under the same evaluation se
 | Avg. latency per query | **98.21 s** | 459.00 s | 4.67× faster |
 | Wall-clock evaluation time | **6,138 s** | 229,502 s | 37.4× faster |
 | Total tokens | **15.27M** | 42.03M | 63.7% fewer |
+
+<div align="center">
+  <img src="./figs/chart_latency_em2mem.png" width="76%" alt="Average latency per query: EM²Mem 98.21 s versus WorldMM 459.00 s">
+</div>
 
 EM²Mem moves multimodal alignment and graph organization into offline memory construction, so inference reads from pre-built event-indexed memory cells instead of re-aligning isolated fragments. Full per-category tables are in the [backend README](src/backend/README.md#results); reproduction scripts in [`experiments/egolife`](https://github.com/zjunlp/LightMem/tree/main/experiments/egolife#results).
 
@@ -378,6 +479,26 @@ This repository belongs to the ZJUNLP **LightMem** series, which targets context
 ## 🙏 Acknowledgements
 
 LightMem-Ego builds on the broader line of work on memory-augmented agents, egocentric multimodal understanding, and wearable AI assistants. We thank all contributors and collaborators who helped develop the system.
+
+---
+
+<span id="contributors"></span>
+
+## 👥 Contributors
+
+Thanks to everyone who has contributed to LightMem-Ego. Issues and pull requests are welcome — see the [contributors graph](https://github.com/zjunlp/LightMem-Ego/graphs/contributors) for the full list.
+
+<div align="center">
+  <a href="https://github.com/zjunlp/LightMem-Ego/graphs/contributors">
+    <img src="https://img.shields.io/github/contributors/zjunlp/LightMem-Ego?color=blue&label=contributors" alt="Contributors">
+  </a>
+  <a href="https://github.com/zjunlp/LightMem-Ego/network/members">
+    <img src="https://img.shields.io/github/forks/zjunlp/LightMem-Ego?color=blue" alt="Forks">
+  </a>
+  <a href="https://github.com/zjunlp/LightMem-Ego/issues">
+    <img src="https://img.shields.io/github/issues/zjunlp/LightMem-Ego?color=blue" alt="Issues">
+  </a>
+</div>
 
 ---
 

@@ -1,3 +1,10 @@
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../../figs/logo_dark.png">
+    <img src="../../figs/lightmem_ego_crop.png" width="220" alt="LightMem-Ego">
+  </picture>
+</div>
+
 # LightMem-Ego · Rokid AI Glasses App
 
 <p>
