@@ -6,41 +6,20 @@
 </div>
 
 <p align="center">
-  <b>Ask anything about what you saw and heard — streamed from smart glasses or the browser.</b>
+  <b>An open-source, self-hostable multimodal memory system for smart glasses and browser capture.</b>
 </p>
 
 <p align="center">
-  <a href="https://arxiv.org/abs/2607.11487"><img src="https://img.shields.io/badge/arXiv-2607.11487-b31b1b?logo=arxiv&logoColor=white" alt="arXiv"></a>
-  <a href="https://huggingface.co/papers/2607.11487"><img src="https://img.shields.io/badge/HuggingFace-Paper-yellow?logo=huggingface&logoColor=white" alt="Hugging Face Paper"></a>
-  <a href="https://arxiv.org/abs/2609.00551"><img src="https://img.shields.io/badge/EM%C2%B2Mem-2609.00551-b31b1b?logo=arxiv&logoColor=white" alt="EM²Mem paper"></a>
-  <img src="https://img.shields.io/badge/EMNLP%202026%20Findings-Accepted-blueviolet" alt="EMNLP 2026 Findings">
-  <a href="https://github.com/zjunlp/LightMem-Ego"><img src="https://img.shields.io/github/stars/zjunlp/LightMem-Ego?style=social" alt="GitHub Stars"></a>
-  <a href="https://github.com/zjunlp/LightMem-Ego/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
+  It turns continuous first-person video and audio into current, short-term, and long-term memory,<br>
+  then answers questions with timestamped visual evidence.
 </p>
 
 <p align="center">
-  <a href="https://lightmem-ego.zjukg.cn/"><b>🌐 Try the Live Demo</b></a> &nbsp;·&nbsp;
-  <a href="https://github.com/zjunlp/LightMem-Ego/releases/download/v1.0.0/app-release.apk"><b>📱 Download the Glasses APK</b></a> &nbsp;·&nbsp;
-  <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><b>🎬 Watch the Demo</b></a>
+  <a href="https://lightmem-ego.zjukg.cn/"><b>🌐 Try in Browser</b></a> &nbsp;·&nbsp;
+  <a href="#quick-start"><b>🚀 Quick Start</b></a> &nbsp;·&nbsp;
+  <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><b>🎬 Watch the Demo</b></a> &nbsp;·&nbsp;
+  <a href="https://github.com/zjunlp/LightMem-Ego/releases/download/v1.0.0/app-release.apk"><b>📱 Glasses APK</b></a>
 </p>
-
-<h5 align="center">⭐ If LightMem-Ego is useful to you, please give us a star — it really helps!</h5>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
-  <img src="https://img.shields.io/badge/React%2019-61DAFB?logo=react&logoColor=black" alt="React 19">
-  <img src="https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white" alt="Vite">
-  <img src="https://img.shields.io/badge/Android-3DDC84?logo=android&logoColor=white" alt="Android">
-  <img src="https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white" alt="Docker">
-</p>
-
-<div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./figs/stat_strip_dark.png">
-    <img src="./figs/stat_strip.png" width="88%" alt="Video-MME (L) accuracy 76.8; 4.67 times faster per query; 100% R@3 on life summarization; 3 memory tiers on one timeline">
-  </picture>
-</div>
 
 <details>
 <summary><b>📑 Table of contents</b></summary>
@@ -71,7 +50,7 @@
 Ask the glasses a question in the middle of your day, and get an answer grounded in what you actually saw and heard. Prefer typing? Join the same live session from the web page.
 
 > [!TIP]
-> **No hardware? Try it right now.** The [live web demo](https://lightmem-ego.zjukg.cn/) runs the whole system in your browser — nothing to install.
+> **No hardware? Try it right now.** The [live web demo](https://lightmem-ego.zjukg.cn/) runs the full LightMem-Ego workflow in your browser — no glasses and no local installation.
 
 <p align="center">
   <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><img src="./figs/demo.gif" width="85%" alt="Asking the glasses where a plastic bottle was placed, and receiving a memory-grounded answer on the HUD"></a>
@@ -104,6 +83,37 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
     </td>
   </tr>
 </table>
+
+<p align="center">
+  ✓ Browser and Rokid AI Glasses &nbsp;·&nbsp; ✓ Self-hostable with Docker &nbsp;·&nbsp; ✓ Timestamped evidence on every answer &nbsp;·&nbsp; ✓ One aligned timeline
+</p>
+
+<h5 align="center">⭐ If LightMem-Ego is useful to you, a star helps more people find it.</h5>
+
+---
+
+<p align="center">
+  <a href="https://arxiv.org/abs/2607.11487"><img src="https://img.shields.io/badge/arXiv-2607.11487-b31b1b?logo=arxiv&logoColor=white" alt="arXiv"></a>
+  <a href="https://huggingface.co/papers/2607.11487"><img src="https://img.shields.io/badge/HuggingFace-Paper-yellow?logo=huggingface&logoColor=white" alt="Hugging Face Paper"></a>
+  <a href="https://arxiv.org/abs/2609.00551"><img src="https://img.shields.io/badge/EM%C2%B2Mem-2609.00551-b31b1b?logo=arxiv&logoColor=white" alt="EM²Mem paper"></a>
+  <img src="https://img.shields.io/badge/EMNLP%202026%20Findings-Accepted-blueviolet" alt="EMNLP 2026 Findings">
+  <a href="https://github.com/zjunlp/LightMem-Ego/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
+</p>
+
+<p align="center">
+  <b>LightMem-Ego</b> is the end-to-end wearable memory system. Its long-term tier (<code>M_lt</code>) is powered by <b>EM²Mem</b> (EMNLP 2026 Findings), part of the ZJUNLP LightMem project family.
+</p>
+
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./figs/research_strip_dark.png">
+    <img src="./figs/research_strip.png" width="88%" alt="EM²Mem versus the strongest baseline: 76.8 Video-MME (L), 67.7 Ego-R1 Bench, 66.0 EgoLifeQA, 4.67 times faster per query">
+  </picture>
+</div>
+
+<p align="center">
+  <i>EM²Mem accuracy, against the strongest baseline (WorldMM) under the same evaluation setting. Per-category tables in <a href="#results">Results</a>.</i>
+</p>
 
 ---
 
@@ -152,7 +162,7 @@ Representative commercial assistants, text-based memory systems, and egocentric 
 | EgoButler | AI-glasses egocentric video and audio | Partial | Partial | Partial | Partial | ✓ |
 | **LightMem-Ego** | **Phone and glasses-style client** | **✓** | **✓** | **✓** | **✓** | **✓** |
 
-**✓** implemented as an explicit first-class component · **Partial** limited, implicit, offline, session-level, or modality-restricted · **—** not explicitly supported or not publicly described. Adapted from the [LightMem-Ego paper](https://arxiv.org/abs/2607.11487).
+**✓** implemented as an explicit first-class component · **Partial** limited, implicit, offline, session-level, or modality-restricted · **—** not explicitly supported or not publicly described. Adapted from the [LightMem-Ego paper](https://arxiv.org/abs/2607.11487). *Phone was the paper's evaluation client — the open-source clients are the browser frontend and the Rokid AI Glasses app.*
 
 ---
 
@@ -292,7 +302,7 @@ The backend divides each session into short event anchors and stores multimodal 
 ### End-to-end system — LightMem-Ego
 
 > [!NOTE]
-> These numbers come from a small-batch everyday-life dataset we collected with the phone and glasses clients — not a public leaderboard. All latencies are end-to-end (question → answer). Reported in the [LightMem-Ego paper](https://arxiv.org/abs/2607.11487).
+> These numbers come from a small-batch everyday-life dataset we collected with the **phone and glasses client profiles used in the paper** — the open-source clients are the browser frontend and the Rokid AI Glasses app. Not a public leaderboard; all latencies are end-to-end (question → answer). Reported in the [LightMem-Ego paper](https://arxiv.org/abs/2607.11487).
 
 **Retrieval accuracy** — Recall@k over the retrieved memory entries, with MRR for the first relevant hit:
 
@@ -356,6 +366,15 @@ EM²Mem moves multimodal alignment and graph organization into offline memory co
 
 ## 📦 Repository Layout
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/React%2019-61DAFB?logo=react&logoColor=black" alt="React 19">
+  <img src="https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white" alt="Vite">
+  <img src="https://img.shields.io/badge/Android-3DDC84?logo=android&logoColor=white" alt="Android">
+  <img src="https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white" alt="Docker">
+</p>
+
 | Path | What's inside | Docs |
 | :--- | :--- | :--- |
 | [`src/ai_glass_app/`](src/ai_glass_app/) | Android app for Rokid AI Glasses (Kotlin, Jetpack Compose, CameraX) | [README](src/ai_glass_app/README.md) |
@@ -369,7 +388,7 @@ EM²Mem moves multimodal alignment and graph organization into offline memory co
 
 ## 🗺️ Roadmap
 
-- [ ] Publish end-to-end evaluation numbers and reproduction scripts in this repository.
+- [ ] Release the end-to-end evaluation dataset and reproducibility scripts.
 - [ ] Pluggable ASR, VLM, and embedding backends beyond the current defaults.
 - [ ] Support wearable devices beyond Rokid AI Glass.
 - [ ] On-device filtering and user-controlled memory editing for privacy-sensitive capture.
@@ -444,6 +463,10 @@ LightMem-Ego processes camera frames, microphone audio, transcripts, and generat
 <span id="star-history"></span>
 
 ## ⭐ Star History
+
+<p align="center">
+  <a href="https://github.com/zjunlp/LightMem-Ego"><img src="https://img.shields.io/github/stars/zjunlp/LightMem-Ego?style=social" alt="GitHub Stars"></a>
+</p>
 
 <div align="center">
   <a href="https://star-history.com/#zjunlp/LightMem-Ego&Date"><img src="https://api.star-history.com/svg?repos=zjunlp/LightMem-Ego&type=Date" width="70%" alt="Star history chart"></a>
