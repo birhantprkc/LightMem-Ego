@@ -6,12 +6,11 @@
 </div>
 
 <p align="center">
-  <b>An open-source, self-hostable multimodal memory system for smart glasses and browser capture.</b>
+  <b>An open-source, self-hostable multimodal memory system for smart glasses and the browser.</b>
 </p>
 
 <p align="center">
-  It turns continuous first-person video and audio into current, short-term, and long-term memory,<br>
-  then answers questions with timestamped visual evidence.
+  Current, short-term and long-term memory on one timeline, with timestamped evidence for every answer.
 </p>
 
 <p align="center">
@@ -30,10 +29,6 @@
 </p>
 
 <p align="center">
-  <b>LightMem-Ego</b> is the end-to-end system; its long-term tier (<code>M_lt</code>) is powered by <b>EM²Mem</b> (EMNLP 2026 Findings), part of the ZJUNLP LightMem project family.
-</p>
-
-<p align="center">
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
   <img src="https://img.shields.io/badge/React%2019-61DAFB?logo=react&logoColor=black" alt="React 19">
@@ -42,16 +37,16 @@
   <img src="https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white" alt="Docker">
 </p>
 
+<p align="center">
+  <b>LightMem-Ego</b> is the end-to-end system; its long-term tier (<code>M_lt</code>) is powered by <a href="https://arxiv.org/abs/2609.00551"><b>EM²Mem</b></a> (EMNLP 2026 Findings), part of the ZJUNLP <a href="https://github.com/zjunlp/LightMem">LightMem</a> project family.
+</p>
+
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./figs/research_strip_dark.png">
     <img src="./figs/research_strip.png" width="88%" alt="EM²Mem versus the strongest baseline: 76.8 Video-MME (L), 67.7 Ego-R1 Bench, 66.0 EgoLifeQA, 4.67 times faster per query">
   </picture>
 </div>
-
-<p align="center">
-  <i>EM²Mem accuracy, against the strongest baseline (WorldMM) under the same evaluation setting. Per-category tables in <a href="#results">Results</a>.</i>
-</p>
 
 <details>
 <summary><b>📑 Table of contents</b></summary>
