@@ -47,9 +47,8 @@
 <details>
 <summary><b>📑 Table of contents</b></summary>
 
-- [🎬 Demo](#demo)
 - [📢 News](#news)
-- [✨ Highlights](#highlights)
+- [🎬 Demo](#demo)
 - [🎯 Why LightMem-Ego](#why)
 - [🚀 Quick Start](#quick-start)
 - [💬 What You Can Ask](#scenarios)
@@ -64,6 +63,18 @@
 - [🔐 Privacy](#privacy)
 
 </details>
+
+---
+
+<span id="news"></span>
+
+## 📢 News
+
+- **[2026-09]** ✨ Multi-session support, online memory editing, and streaming answers land in the backend and web UI.
+- **[2026-08]** 🎉🎉🎉 [**EM²Mem: Event-Centric Multimodal Memory for Large Language Models**](https://arxiv.org/abs/2609.00551) — the long-term memory engine behind this backend — has been accepted to **EMNLP 2026 Findings**!
+- **[2026-07-13]** 📄 [**LightMem-Ego: Your AI Memory for Everyday Life**](https://arxiv.org/abs/2607.11487) is released on arXiv.
+- **[2026-07]** 📦 **v1.0.0 released** — [download the Rokid AI Glass APK](https://github.com/zjunlp/LightMem-Ego/releases/tag/v1.0.0) and reproduce the full stack with [Docker](https://github.com/zjunlp/LightMem-Ego/blob/main/deploy/DOCKER.md).
+- **[2026-05]** 🎉 [**LightMem-Ego: Your AI Memory for Everyday Life**](https://github.com/zjunlp/LightMem-Ego) is open-sourced.
 
 ---
 
@@ -119,31 +130,6 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 
 ---
 
-<span id="news"></span>
-
-## 📢 News
-
-- **[2026-09]** ✨ Multi-session support, online memory editing, and streaming answers land in the backend and web UI.
-- **[2026-08]** 🎉🎉🎉 [**EM²Mem: Event-Centric Multimodal Memory for Large Language Models**](https://arxiv.org/abs/2609.00551) — the long-term memory engine behind this backend — has been accepted to **EMNLP 2026 Findings**!
-- **[2026-07-13]** 📄 [**LightMem-Ego: Your AI Memory for Everyday Life**](https://arxiv.org/abs/2607.11487) is released on arXiv.
-- **[2026-07]** 📦 **v1.0.0 released** — [download the Rokid AI Glass APK](https://github.com/zjunlp/LightMem-Ego/releases/tag/v1.0.0) and reproduce the full stack with [Docker](https://github.com/zjunlp/LightMem-Ego/blob/main/deploy/DOCKER.md).
-- **[2026-05]** 🎉 [**LightMem-Ego: Your AI Memory for Everyday Life**](https://github.com/zjunlp/LightMem-Ego) is open-sourced.
-
----
-
-<span id="highlights"></span>
-
-## ✨ Highlights
-
-- 🎥 **Always-on egocentric capture** — streams first-person camera frames and microphone audio from Rokid AI Glasses or a browser.
-- 🧠 **Three-tier memory** — a rolling *current* memory, *short-term* micro-events, and consolidated *long-term* episodes, routines, and preferences.
-- 🔍 **Memory-grounded answers** — each answer ships with timestamped visual and transcript evidence you can inspect.
-- ⏱️ **Timeline-aligned multimodality** — frames, audio chunks, ASR transcripts, and metadata share one session timeline.
-- 👓 **Glasses and web, one session** — start capture on the glasses, keep asking from the web page in the same live session.
-- 🐳 **One-command reproduction** — `docker compose up --build` brings up the web UI plus the full backend worker pipeline.
-
----
-
 <span id="why"></span>
 
 ## 🎯 Why LightMem-Ego
@@ -156,7 +142,7 @@ Existing memory systems each solve one slice of the problem:
 | **Live multimodal assistants** (Gemini Live, Ray-Ban Meta) | The current scene | Anything before this session — no durable episodic or semantic memory |
 | **Video memory systems** (egocentric research systems, video archives) | Recorded history you search afterwards | Real-time interaction, and evidence tied to a timestamped moment |
 
-**LightMem-Ego keeps all three at once:** current, short-term and long-term memory on one aligned timeline, every answer carrying the timestamped visual evidence behind it, on smart glasses and in the browser.
+**LightMem-Ego keeps all three at once.** It streams first-person video and audio from Rokid AI Glasses or the browser, aligns every frame, audio chunk and transcript on one session timeline, and promotes them through current → short-term → long-term memory. Answers come back with the timestamped evidence behind them, start capture on the glasses and keep asking from the web page in the same session, and the whole stack runs locally with one `docker compose` command.
 
 A capability-by-capability comparison against ten representative systems is in [How It Compares](#comparison).
 
