@@ -10,22 +10,12 @@
 </p>
 
 <p align="center">
-  <a href="https://arxiv.org/abs/2607.11487">
-    <img src="https://img.shields.io/badge/arXiv-2607.11487-b31b1b?logo=arxiv&logoColor=white" alt="arXiv">
-  </a>
-  <a href="https://huggingface.co/papers/2607.11487">
-    <img src="https://img.shields.io/badge/HuggingFace-Paper-yellow?logo=huggingface&logoColor=white" alt="Hugging Face Paper">
-  </a>
-  <a href="https://arxiv.org/abs/2609.00551">
-    <img src="https://img.shields.io/badge/EM%C2%B2Mem-2609.00551-b31b1b?logo=arxiv&logoColor=white" alt="EM²Mem paper">
-  </a>
+  <a href="https://arxiv.org/abs/2607.11487"><img src="https://img.shields.io/badge/arXiv-2607.11487-b31b1b?logo=arxiv&logoColor=white" alt="arXiv"></a>
+  <a href="https://huggingface.co/papers/2607.11487"><img src="https://img.shields.io/badge/HuggingFace-Paper-yellow?logo=huggingface&logoColor=white" alt="Hugging Face Paper"></a>
+  <a href="https://arxiv.org/abs/2609.00551"><img src="https://img.shields.io/badge/EM%C2%B2Mem-2609.00551-b31b1b?logo=arxiv&logoColor=white" alt="EM²Mem paper"></a>
   <img src="https://img.shields.io/badge/EMNLP%202026%20Findings-Accepted-blueviolet" alt="EMNLP 2026 Findings">
-  <a href="https://github.com/zjunlp/LightMem-Ego">
-    <img src="https://img.shields.io/github/stars/zjunlp/LightMem-Ego?style=social" alt="GitHub Stars">
-  </a>
-  <a href="https://github.com/zjunlp/LightMem-Ego/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT">
-  </a>
+  <a href="https://github.com/zjunlp/LightMem-Ego"><img src="https://img.shields.io/github/stars/zjunlp/LightMem-Ego?style=social" alt="GitHub Stars"></a>
+  <a href="https://github.com/zjunlp/LightMem-Ego/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
 </p>
 
 <p align="center">
@@ -75,9 +65,7 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 > **No hardware? Try it right now.** The [live web demo](https://lightmem-ego.zjukg.cn/) runs the whole system in your browser — nothing to install.
 
 <p align="center">
-  <a href="https://www.bilibili.com/video/BV1oANw62EA3/">
-    <img src="./figs/demo.gif" width="85%" alt="Asking the glasses where a plastic bottle was placed, and receiving a memory-grounded answer on the HUD">
-  </a>
+  <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><img src="./figs/demo.gif" width="85%" alt="Asking the glasses where a plastic bottle was placed, and receiving a memory-grounded answer on the HUD"></a>
   <br>
   <sub>Ask on the glasses → a memory-grounded answer on the HUD. Full demo:
   <a href="https://www.youtube.com/watch?v=BZuIxn00xlc">YouTube</a> ·
@@ -463,7 +451,5 @@ LightMem-Ego processes camera frames, microphone audio, transcripts, and generat
 ## ⭐ Star History
 
 <div align="center">
-  <a href="https://star-history.com/#zjunlp/LightMem-Ego&Date">
-    <img src="https://api.star-history.com/svg?repos=zjunlp/LightMem-Ego&type=Date" width="70%" alt="Star history chart">
-  </a>
+  <a href="https://star-history.com/#zjunlp/LightMem-Ego&Date"><img src="https://api.star-history.com/svg?repos=zjunlp/LightMem-Ego&type=Date" width="70%" alt="Star history chart"></a>
 </div>
