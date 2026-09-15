@@ -88,7 +88,7 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 > **No hardware? Try it right now.** The [live web demo](https://lightmem-ego.zjukg.cn/) runs the full LightMem-Ego workflow in your browser — on a phone too, where it captures from the phone's own camera and microphone. No glasses, no local installation.
 
 <p align="center">
-  <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><img src="./figs/demo.gif" width="85%" alt="Asking the glasses where a plastic bottle was placed, and receiving a memory-grounded answer on the HUD"></a>
+  <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><img src="./figs/demo_v2.gif" width="85%" alt="The glasses record; the user asks where a plastic bottle was placed; the answer comes back with the timestamped evidence"></a>
 </p>
 
 <div align="center">
@@ -415,15 +415,6 @@ Representative commercial assistants, text-based memory systems, and egocentric 
 <span id="repository-layout"></span>
 
 ## 📦 Repository Layout
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
-  <img src="https://img.shields.io/badge/React%2019-61DAFB?logo=react&logoColor=black" alt="React 19">
-  <img src="https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white" alt="Vite">
-  <img src="https://img.shields.io/badge/Android-3DDC84?logo=android&logoColor=white" alt="Android">
-  <img src="https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white" alt="Docker">
-</p>
 
 | Path | What's inside | Docs |
 | :--- | :--- | :--- |
