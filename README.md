@@ -15,10 +15,42 @@
 </p>
 
 <p align="center">
+  <a href="https://arxiv.org/abs/2607.11487"><img src="https://img.shields.io/badge/arXiv-2607.11487-b31b1b?logo=arxiv&logoColor=white" alt="arXiv"></a>
+  <a href="https://huggingface.co/papers/2607.11487"><img src="https://img.shields.io/badge/HuggingFace-Paper-yellow?logo=huggingface&logoColor=white" alt="Hugging Face Paper"></a>
+  <a href="https://arxiv.org/abs/2609.00551"><img src="https://img.shields.io/badge/EM%C2%B2Mem-2609.00551-b31b1b?logo=arxiv&logoColor=white" alt="EM²Mem paper"></a>
+  <img src="https://img.shields.io/badge/EMNLP%202026%20Findings-Accepted-blueviolet" alt="EMNLP 2026 Findings">
+  <a href="https://github.com/zjunlp/LightMem-Ego/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
+</p>
+
+<p align="center">
   <a href="https://lightmem-ego.zjukg.cn/"><b>🌐 Try in Browser</b></a> &nbsp;·&nbsp;
   <a href="#quick-start"><b>🚀 Quick Start</b></a> &nbsp;·&nbsp;
   <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><b>🎬 Watch the Demo</b></a> &nbsp;·&nbsp;
   <a href="https://github.com/zjunlp/LightMem-Ego/releases/download/v1.0.0/app-release.apk"><b>📱 Glasses APK</b></a>
+</p>
+
+<p align="center">
+  <b>LightMem-Ego</b> is the end-to-end system; its long-term tier (<code>M_lt</code>) is powered by <b>EM²Mem</b> (EMNLP 2026 Findings), part of the ZJUNLP LightMem project family.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/React%2019-61DAFB?logo=react&logoColor=black" alt="React 19">
+  <img src="https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white" alt="Vite">
+  <img src="https://img.shields.io/badge/Android-3DDC84?logo=android&logoColor=white" alt="Android">
+  <img src="https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white" alt="Docker">
+</p>
+
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./figs/research_strip_dark.png">
+    <img src="./figs/research_strip.png" width="88%" alt="EM²Mem versus the strongest baseline: 76.8 Video-MME (L), 67.7 Ego-R1 Bench, 66.0 EgoLifeQA, 4.67 times faster per query">
+  </picture>
+</div>
+
+<p align="center">
+  <i>EM²Mem accuracy, against the strongest baseline (WorldMM) under the same evaluation setting. Per-category tables in <a href="#results">Results</a>.</i>
 </p>
 
 <details>
@@ -28,8 +60,8 @@
 - [📢 News](#news)
 - [✨ Highlights](#highlights)
 - [🎯 Why LightMem-Ego](#why)
-- [💬 What You Can Ask](#scenarios)
 - [🚀 Quick Start](#quick-start)
+- [💬 What You Can Ask](#scenarios)
 - [🏗️ How It Works](#architecture)
 - [📊 Results](#results)
 - [🆚 How It Compares](#comparison)
@@ -93,31 +125,6 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 
 ---
 
-<p align="center">
-  <a href="https://arxiv.org/abs/2607.11487"><img src="https://img.shields.io/badge/arXiv-2607.11487-b31b1b?logo=arxiv&logoColor=white" alt="arXiv"></a>
-  <a href="https://huggingface.co/papers/2607.11487"><img src="https://img.shields.io/badge/HuggingFace-Paper-yellow?logo=huggingface&logoColor=white" alt="Hugging Face Paper"></a>
-  <a href="https://arxiv.org/abs/2609.00551"><img src="https://img.shields.io/badge/EM%C2%B2Mem-2609.00551-b31b1b?logo=arxiv&logoColor=white" alt="EM²Mem paper"></a>
-  <img src="https://img.shields.io/badge/EMNLP%202026%20Findings-Accepted-blueviolet" alt="EMNLP 2026 Findings">
-  <a href="https://github.com/zjunlp/LightMem-Ego/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
-</p>
-
-<p align="center">
-  <b>LightMem-Ego</b> is the end-to-end wearable memory system. Its long-term tier (<code>M_lt</code>) is powered by <b>EM²Mem</b> (EMNLP 2026 Findings), part of the ZJUNLP LightMem project family.
-</p>
-
-<div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./figs/research_strip_dark.png">
-    <img src="./figs/research_strip.png" width="88%" alt="EM²Mem versus the strongest baseline: 76.8 Video-MME (L), 67.7 Ego-R1 Bench, 66.0 EgoLifeQA, 4.67 times faster per query">
-  </picture>
-</div>
-
-<p align="center">
-  <i>EM²Mem accuracy, against the strongest baseline (WorldMM) under the same evaluation setting. Per-category tables in <a href="#results">Results</a>.</i>
-</p>
-
----
-
 <span id="news"></span>
 
 ## 📢 News
@@ -161,61 +168,50 @@ A capability-by-capability comparison against ten representative systems is in [
 
 ---
 
-<span id="scenarios"></span>
-
-## 💬 What You Can Ask
-
-| Scenario | Example question | Memory used |
-| :--- | :--- | :--- |
-| **Object finding** | "Where did I leave my badge?" | Current + short-term |
-| **Conversation recall** | "What did the doctor tell me after checking the report?" | Short-term + transcript |
-| **Day summarization** | "What did I do this afternoon?" | Short-term + long-term |
-| **Routine discovery** | "What do I usually do after arriving at the office?" | Long-term semantic |
-| **Live assistance** | "What am I looking at right now?" | Current |
-
----
-
 <span id="quick-start"></span>
 
 ## 🚀 Quick Start
 
 > [!IMPORTANT]
-> Every path except the hosted demo needs an OpenAI-compatible LLM endpoint (base URL, API key, model names). Speech goes through the [Xfyun](https://www.xfyun.cn/) WebAPI, so add those credentials as well. Model weights and a GPU are optional.
+> Every path except the hosted demo needs an OpenAI-compatible LLM endpoint (base URL, API key, model names) and [Xfyun](https://www.xfyun.cn/) ASR credentials for speech. The default stack also expects `Qwen3-Embedding-4B` weights under `docker-data/models/`.
 
-| Path | Setup | Visual retrieval | Best for |
-| :--- | :--- | :--- | :--- |
-| 🌐 **[Live demo](https://lightmem-ego.zjukg.cn/)** | none | full, hosted | Seeing what it does |
-| 🐳 **[CPU smoke test](#smoke-test)** | Docker | `mock` | Confirming the stack runs |
-| ⚡ **[Full retrieval](#full-retrieval)** | Docker + GPU profile | real (VLM2Vec) | Memory over your own footage |
-| 👓 **[Rokid glasses](#rokid-glasses)** | APK + a backend | from your backend | The wearable experience |
+| Path | Setup | What it adds | GPU |
+| :--- | :--- | :--- | :---: |
+| 🌐 **[Live demo](https://lightmem-ego.zjukg.cn/)** | none | the full hosted workflow | — |
+| 🐳 **[Docker](#docker)** | Docker + your LLM endpoint | the standard self-hosted setup | no |
+| 👁 **[+ visual retrieval](#visual-retrieval)** | `--profile models` + VLM2Vec weights | frame-level visual matching | yes |
+| ⚡ **[+ local Qwen](#local-qwen)** | vLLM server on your GPU | lower first-token latency | yes |
+| 👓 **[Rokid glasses](#rokid-glasses)** | APK + any backend above | hands-free capture, HUD answers | no |
 
-> [!WARNING]
-> The smoke test runs with `EM2MEM_VISUAL_BACKEND=mock` and `EM2MEM_TEXT_EMBED_BACKEND=local`. The UI comes up, but there is **no real visual or text retrieval**, so answers will not match the [demo](#demo). Use the full profile for that.
+> [!NOTE]
+> The last two are **independent add-ons**, not requirements. The plain Docker setup is what we run day to day — add visual retrieval when caption and transcript evidence is not enough, and local Qwen when a remote API feels slow.
 
-<span id="smoke-test"></span>
+<span id="docker"></span>
 
-### 🐳 CPU smoke test
+### 🐳 Docker
 
 ```bash
 git clone https://github.com/zjunlp/LightMem-Ego.git
 cd LightMem-Ego
-cp deploy/.env.example .env     # fill in your LLM endpoint, keys, and model names
+cp deploy/.env.example .env     # LLM endpoint, keys, model names, Xfyun credentials
 docker compose up --build
 ```
 
 Open **http://localhost:8080**. The web container proxies `/api` to the backend, so no CORS setup is needed. The first build takes a few minutes.
 
-<span id="full-retrieval"></span>
+By default `EM2MEM_VISUAL_BACKEND=mock`, so retrieval runs on captions and transcripts. Current memory, short-term micro-events, long-term consolidation and evidence-grounded answers all behave as in the [demo](#demo) — only frame-level visual matching is off.
 
-### ⚡ Full multimodal retrieval
+<span id="visual-retrieval"></span>
 
-The full stack needs a VLM2Vec visual encoder and a Qwen3 text embedder. The `models` profile runs both as containers:
+### 👁 Add visual retrieval (optional)
+
+Put `VLM2Vec-V2.0` and `Qwen3-Embedding-4B` under `docker-data/models/`, then start the model services:
 
 ```bash
 docker compose --profile models up --build
 ```
 
-Then point the backend at them in `.env`:
+Point the backend at them in `.env`:
 
 ```bash
 EM2MEM_VISUAL_BACKEND=remote
@@ -228,7 +224,23 @@ On a GPU host, add the override so the workers get the GPU as well:
 docker compose -f compose.yaml -f compose.gpu.yaml --profile models up --build
 ```
 
-This needs the NVIDIA Container Toolkit and model directories matching the paths in `.env` — see [`deploy/DOCKER.md`](deploy/DOCKER.md) for GPU services, SRS/RTMP live ingest, and data persistence.
+This needs the NVIDIA Container Toolkit and model directories matching the paths in `.env` — see [`deploy/DOCKER.md`](deploy/DOCKER.md) for details.
+
+<span id="local-qwen"></span>
+
+### ⚡ Local Qwen for lower latency (optional)
+
+This is where a GPU helps most. Every memory write and every answer otherwise round-trips to a remote API; serving the LLM locally cuts first-token latency noticeably. The scripts build an isolated vLLM environment and switch the backend onto it:
+
+```bash
+cd src/backend
+scripts/setup_local_qwen35_env.sh
+scripts/download_local_qwen35_model.sh
+scripts/select_llm_profile.sh local-qwen35
+scripts/stop_server_and_workers.sh --keep-api --force
+```
+
+Details and the smoke test: [`src/backend/README.md`](src/backend/README.md).
 
 <span id="rokid-glasses"></span>
 
@@ -285,6 +297,20 @@ scripts/start_online_all_workers.sh
 Details: [`src/backend/README.md`](src/backend/README.md) and [`DEPLOYMENT.md`](src/backend/DEPLOYMENT.md).
 
 </details>
+
+---
+
+<span id="scenarios"></span>
+
+## 💬 What You Can Ask
+
+| Scenario | Example question | Memory used |
+| :--- | :--- | :--- |
+| **Object finding** | "Where did I leave my badge?" | Current + short-term |
+| **Conversation recall** | "What did the doctor tell me after checking the report?" | Short-term + transcript |
+| **Day summarization** | "What did I do this afternoon?" | Short-term + long-term |
+| **Routine discovery** | "What do I usually do after arriving at the office?" | Long-term semantic |
+| **Live assistance** | "What am I looking at right now?" | Current |
 
 ---
 
