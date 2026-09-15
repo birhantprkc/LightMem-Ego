@@ -82,8 +82,8 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 </div>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=BZuIxn00xlc"><img src="https://img.shields.io/badge/Watch_on-YouTube-FF0000?logo=youtube&logoColor=white&style=for-the-badge" alt="Watch the full demo on YouTube"></a>
-  <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><img src="https://img.shields.io/badge/Watch_on-Bilibili-00A1D6?logo=bilibili&logoColor=white&style=for-the-badge" alt="Watch the full demo on Bilibili"></a>
+  <a href="https://www.youtube.com/watch?v=BZuIxn00xlc"><img src="https://img.shields.io/badge/Watch_on-YouTube-0969DA?logo=youtube&logoColor=white&style=for-the-badge&labelColor=0969DA" alt="Watch the full demo on YouTube"></a>
+  <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><img src="https://img.shields.io/badge/Watch_on-Bilibili-0969DA?logo=bilibili&logoColor=white&style=for-the-badge&labelColor=0969DA" alt="Watch the full demo on Bilibili"></a>
 </p>
 
 <table align="center">
