@@ -10,3 +10,4 @@ gradlew text eol=lf
 *.webp binary
 *.png binary
 *.jpg binary
+*.gif binary

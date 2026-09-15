@@ -47,10 +47,12 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 
 <p align="center">
   <a href="https://www.bilibili.com/video/BV1oANw62EA3/">
-    <img src="./figs/thumbnail.png" width="70%" alt="LightMem-Ego demo video">
+    <img src="./figs/demo.gif" width="85%" alt="Asking the glasses where a plastic bottle was placed, and receiving a memory-grounded answer on the HUD">
   </a>
   <br>
-  <a href="https://www.youtube.com/watch?v=BZuIxn00xlc">YouTube</a> · <a href="https://www.bilibili.com/video/BV1oANw62EA3/">Bilibili</a>
+  <sub>Ask on the glasses → a memory-grounded answer on the HUD. Full demo:
+  <a href="https://www.youtube.com/watch?v=BZuIxn00xlc">YouTube</a> ·
+  <a href="https://www.bilibili.com/video/BV1oANw62EA3/">Bilibili</a></sub>
 </p>
 
 <table align="center">
@@ -77,10 +79,10 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 ## 📢 News
 
 - **[2026-09]** ✨ Multi-session support, online memory editing, and streaming answers land in the backend and web UI.
-- **[2026-08]** 🎉🎉🎉 [**EM²Mem**](https://arxiv.org/abs/2609.00551) — the long-term memory engine behind this backend — has been accepted by **EMNLP 2026**!
-- **[2026-07-13]** 📄 The **LightMem-Ego** paper is released on arXiv: [2607.11487](https://arxiv.org/abs/2607.11487).
-- **[2026-07]** 📦 **v1.0.0 released** — [download the Rokid AI Glass APK](https://github.com/zjunlp/LightMem-Ego/releases/tag/v1.0.0) and reproduce the full stack with Docker.
-- **[2026-05]** 🎉 LightMem-Ego is open-sourced.
+- **[2026-08]** 🎉🎉🎉 [**EM²Mem: Event-Centric Multimodal Memory for Large Language Models**](https://arxiv.org/abs/2609.00551) — the long-term memory engine behind this backend — has been accepted by **EMNLP 2026**!
+- **[2026-07-13]** 📄 [**LightMem-Ego: Your AI Memory for Everyday Life**](https://arxiv.org/abs/2607.11487) is released on arXiv.
+- **[2026-07]** 📦 **v1.0.0 released** — [download the Rokid AI Glass APK](https://github.com/zjunlp/LightMem-Ego/releases/tag/v1.0.0) and reproduce the full stack with [Docker](https://github.com/zjunlp/LightMem-Ego/blob/main/deploy/DOCKER.md).
+- **[2026-05]** 🎉 [**LightMem-Ego: Your AI Memory for Everyday Life**](https://github.com/zjunlp/LightMem-Ego) is open-sourced.
 
 ---
 
