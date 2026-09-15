@@ -1,5 +1,8 @@
 <div align="center">
-  <img src="./figs/banner_cover.png" width="100%" alt="LightMem-Ego: Your AI Memory for Everyday Life">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./figs/banner_dark.png">
+    <img src="./figs/banner.png" width="100%" alt="LightMem-Ego: Your AI Memory for Everyday Life">
+  </picture>
 </div>
 
 <p align="center">
