@@ -82,8 +82,8 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 </div>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=BZuIxn00xlc"><picture><source media="(prefers-color-scheme: dark)" srcset="./figs/btn_youtube_dark.png"><img src="./figs/btn_youtube.png" height="34" alt="Watch the full demo on YouTube"></picture></a>
-  &nbsp;&nbsp;<a href="https://www.bilibili.com/video/BV1oANw62EA3/"><picture><source media="(prefers-color-scheme: dark)" srcset="./figs/btn_bilibili_dark.png"><img src="./figs/btn_bilibili.png" height="34" alt="Watch the full demo on Bilibili"></picture></a>
+  <a href="https://www.youtube.com/watch?v=BZuIxn00xlc"><picture><source media="(prefers-color-scheme: dark)" srcset="./figs/watch_youtube_dark.png"><img src="./figs/watch_youtube.png" height="34" alt="Watch the full demo on YouTube"></picture></a>
+  &nbsp;&nbsp;<a href="https://www.bilibili.com/video/BV1oANw62EA3/"><picture><source media="(prefers-color-scheme: dark)" srcset="./figs/watch_bilibili_dark.png"><img src="./figs/watch_bilibili.png" height="34" alt="Watch the full demo on Bilibili"></picture></a>
 </p>
 
 <table align="center">
