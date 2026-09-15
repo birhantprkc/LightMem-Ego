@@ -29,15 +29,6 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
-  <img src="https://img.shields.io/badge/React%2019-61DAFB?logo=react&logoColor=black" alt="React 19">
-  <img src="https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white" alt="Vite">
-  <img src="https://img.shields.io/badge/Android-3DDC84?logo=android&logoColor=white" alt="Android">
-  <img src="https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white" alt="Docker">
-</p>
-
-<p align="center">
   <a href="https://lightmem-ego.zjukg.cn/"><b>🌐 Try the Live Demo</b></a> &nbsp;·&nbsp;
   <a href="https://github.com/zjunlp/LightMem-Ego/releases/download/v1.0.0/app-release.apk"><b>📱 Download the Glasses APK</b></a> &nbsp;·&nbsp;
   <a href="https://www.bilibili.com/video/BV1oANw62EA3/"><b>🎬 Watch the Demo</b></a>
@@ -45,14 +36,12 @@
 
 <h5 align="center">⭐ If LightMem-Ego is useful to you, please give us a star — it really helps!</h5>
 
-<table align="center">
-  <tr>
-    <td align="center" width="25%"><b>76.8</b><br><sub>Video-MME (L) accuracy</sub></td>
-    <td align="center" width="25%"><b>4.67×</b><br><sub>faster per query</sub></td>
-    <td align="center" width="25%"><b>100%</b><br><sub>R@3 · life summarization</sub></td>
-    <td align="center" width="25%"><b>3</b><br><sub>memory tiers, one timeline</sub></td>
-  </tr>
-</table>
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./figs/stat_strip_dark.png">
+    <img src="./figs/stat_strip.png" width="88%" alt="Video-MME (L) accuracy 76.8; 4.67 times faster per query; 100% R@3 on life summarization; 3 memory tiers on one timeline">
+  </picture>
+</div>
 
 <details>
 <summary><b>📑 Table of contents</b></summary>
