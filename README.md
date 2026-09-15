@@ -6,7 +6,7 @@
 </div>
 
 <p align="center">
-  <b>Stream first-person video &amp; audio from smart glasses or your browser, then ask anything about what you saw and heard.</b>
+  <b>Ask anything about what you saw and heard — streamed from smart glasses or the browser.</b>
 </p>
 
 <p align="center">
@@ -26,8 +26,6 @@
   <a href="https://github.com/zjunlp/LightMem-Ego/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT">
   </a>
-  <img src="https://img.shields.io/github/last-commit/zjunlp/LightMem-Ego?color=blue" alt="Last Commit">
-  <img src="https://img.shields.io/badge/PRs-Welcome-blue" alt="PRs Welcome">
 </p>
 
 <p align="center">
