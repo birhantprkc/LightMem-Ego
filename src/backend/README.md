@@ -236,6 +236,9 @@ Reproduction scripts: [`experiments/egolife`](https://github.com/zjunlp/LightMem
 
 All settings come from environment variables; the release ships placeholders in [`.env.example`](.env.example).
 
+> [!NOTE]
+> The two env files disagree on purpose: the source `.env.example` defaults to ASR backend `whisperx` (a local GPU model), while the Docker stack defaults to `xfyun` (a hosted WebAPI). Pick deliberately via `EM2MEM_STREAM_ASR_BACKEND` / `EM2MEM_AUDIO_ASR_BACKEND`.
+
 <details>
 <summary><b>API and pipeline</b></summary>
 
@@ -269,8 +272,7 @@ EM2MEM_MST_EPISODIC_MODEL=gpt-5.4
 <details>
 <summary><b>ASR</b></summary>
 
-> [!NOTE]
-> The two env files disagree on purpose: the source `.env.example` defaults to `whisperx` (a local GPU model), while the Docker stack defaults to `xfyun` (a hosted WebAPI). Pick deliberately — `EM2MEM_STREAM_ASR_BACKEND` / `EM2MEM_AUDIO_ASR_BACKEND` select it.
+`EM2MEM_STREAM_ASR_BACKEND` / `EM2MEM_AUDIO_ASR_BACKEND` select the backend — see the note under [Configuration](#-configuration).
 
 ```bash
 EM2MEM_STREAM_ASR_BACKEND=whisperx      # or xfyun
