@@ -134,17 +134,14 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 
 ## 🎯 Why LightMem-Ego
 
-Existing memory systems each solve one slice of the problem:
+- 🎥 **Always-on egocentric capture** — streams first-person camera frames and microphone audio from Rokid AI Glasses or a browser.
+- 🧠 **Three-tier memory** — a rolling *current* memory, *short-term* micro-events, and consolidated *long-term* episodes, routines, and preferences.
+- ⏱️ **One aligned timeline** — frames, audio chunks, ASR transcripts and metadata all share a single session timeline.
+- 🔍 **Memory-grounded answers** — every answer ships with the timestamped visual and transcript evidence behind it.
+- 👓 **Glasses and web, one session** — start capture on the glasses, keep asking from the web page in the same live session.
+- 🐳 **Self-hostable** — `docker compose up --build` brings up the web UI and the full backend worker pipeline.
 
-| What exists today | What it remembers | What it misses |
-| :--- | :--- | :--- |
-| **Text memory systems** (ChatGPT Memory, Mem0-style) | Conversations and facts you stated | Everything you never typed — the scene, the objects, what was said out loud |
-| **Live multimodal assistants** (Gemini Live, Ray-Ban Meta) | The current scene | Anything before this session — no durable episodic or semantic memory |
-| **Video memory systems** (egocentric research systems, video archives) | Recorded history you search afterwards | Real-time interaction, and evidence tied to a timestamped moment |
-
-**LightMem-Ego keeps all three at once.** It streams first-person video and audio from Rokid AI Glasses or the browser, aligns every frame, audio chunk and transcript on one session timeline, and promotes them through current → short-term → long-term memory. Answers come back with the timestamped evidence behind them, start capture on the glasses and keep asking from the web page in the same session, and the whole stack runs locally with one `docker compose` command.
-
-A capability-by-capability comparison against ten representative systems is in [How It Compares](#comparison).
+Text memory systems only know what you typed, live assistants only know the current scene, and video systems only let you search afterwards. LightMem-Ego covers all three — the system-by-system table is in [How It Compares](#comparison).
 
 ---
 
