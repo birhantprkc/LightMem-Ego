@@ -122,7 +122,7 @@ Query Worker -> Answer + Evidence
 
 ### End-to-end pipeline
 
-Evaluated on a small-batch everyday-life dataset, driven from the phone and glasses-style clients. All latencies are end-to-end (question → answer); retrieval is scored against the evidence that supports the answer.
+Evaluated on a small, intentionally balanced set — 27 queries (nine per scenario) over five everyday-life videos, about 45.7 minutes of footage — driven from the phone and glasses-style clients. Retrieval, time to first token and end-to-end QA are reported as P50 / P90; retrieval is scored against the evidence that supports the answer.
 
 **Retrieval accuracy**
 
@@ -138,13 +138,15 @@ Evaluated on a small-batch everyday-life dataset, driven from the phone and glas
 | Stage | Phone P50 | Phone P90 | Glasses P50 | Glasses P90 |
 | :--- | :---: | :---: | :---: | :---: |
 | *Short-term memory QA* | | | | |
-| Retrieval | 13 ms | 15 ms | 14 ms | 29 ms |
-| Answer generation | 5.77 s | 10.38 s | 6.10 s | 9.79 s |
-| **End-to-end** | **5.86 s** | **10.95 s** | **7.01 s** | **9.96 s** |
+| Retrieval | 76 ms | 131 ms | 44 ms | 87 ms |
+| Time to first token | 532 ms | 643 ms | 423 ms | 494 ms |
+| Answer generation | 6.13 s | 10.11 s | 6.81 s | 9.14 s |
+| **End-to-end** | **6.42 s** | **10.34 s** | **6.95 s** | **9.31 s** |
 | *Long-term memory QA* | | | | |
-| Retrieval | 4.09 s | 15.39 s | 10.39 s | 28.93 s |
-| Answer generation | 9.00 s | 22.40 s | 9.25 s | 22.62 s |
-| **End-to-end** | **14.87 s** | **35.15 s** | **19.96 s** | **42.70 s** |
+| Retrieval | 2.99 s | 3.84 s | 3.06 s | 3.44 s |
+| Time to first token | 4.64 s | 5.44 s | 4.74 s | 5.07 s |
+| Answer generation | 5.78 s | 9.56 s | 4.37 s | 9.16 s |
+| **End-to-end** | **10.57 s** | **13.93 s** | **8.61 s** | **13.60 s** |
 
 Answer accuracy is 51.9% (LLM-judge) and 55.6% (human) overall — see the [main README](../../README.md#results) for the per-scenario breakdown.
 

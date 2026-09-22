@@ -328,7 +328,7 @@ The backend divides each session into short event anchors and stores multimodal 
 ### End-to-end system — LightMem-Ego
 
 > [!NOTE]
-> These numbers come from a small-batch everyday-life dataset we collected with the **phone and glasses client profiles used in the paper**. In the open-source release the phone client is the web frontend running in a **mobile browser**, capturing from the phone's own camera and microphone — a native app is on the [roadmap](#roadmap). Not a public leaderboard; all latencies are end-to-end (question → answer). Reported in the [LightMem-Ego paper](https://arxiv.org/abs/2607.11487).
+> These numbers come from a small, intentionally balanced set — **27 queries (nine per scenario) over five everyday-life videos, about 45.7 minutes of footage** — collected with the **phone and glasses client profiles used in the paper**. In the open-source release the phone client is the web frontend running in a **mobile browser**, capturing from the phone's own camera and microphone — a native app is on the [roadmap](#roadmap). It measures the current prototype rather than a public leaderboard. Reported in the [LightMem-Ego paper](https://arxiv.org/abs/2607.11487).
 
 **Retrieval accuracy** — Recall@k over the retrieved memory entries, with MRR for the first relevant hit:
 
@@ -353,15 +353,17 @@ The backend divides each session into short event anchors and stores multimodal 
 | Stage | Phone P50 | Phone P90 | Glasses P50 | Glasses P90 |
 | :--- | :---: | :---: | :---: | :---: |
 | *Short-term memory QA* | | | | |
-| Retrieval | 13 ms | 15 ms | 14 ms | 29 ms |
-| Answer generation | 5.77 s | 10.38 s | 6.10 s | 9.79 s |
-| **End-to-end** | **5.86 s** | **10.95 s** | **7.01 s** | **9.96 s** |
+| Retrieval | 76 ms | 131 ms | 44 ms | 87 ms |
+| Time to first token | 532 ms | 643 ms | 423 ms | 494 ms |
+| Answer generation | 6.13 s | 10.11 s | 6.81 s | 9.14 s |
+| **End-to-end** | **6.42 s** | **10.34 s** | **6.95 s** | **9.31 s** |
 | *Long-term memory QA* | | | | |
-| Retrieval | 4.09 s | 15.39 s | 10.39 s | 28.93 s |
-| Answer generation | 9.00 s | 22.40 s | 9.25 s | 22.62 s |
-| **End-to-end** | **14.87 s** | **35.15 s** | **19.96 s** | **42.70 s** |
+| Retrieval | 2.99 s | 3.84 s | 3.06 s | 3.44 s |
+| Time to first token | 4.64 s | 5.44 s | 4.74 s | 5.07 s |
+| Answer generation | 5.78 s | 9.56 s | 4.37 s | 9.16 s |
+| **End-to-end** | **10.57 s** | **13.93 s** | **8.61 s** | **13.60 s** |
 
-*Glasses columns are the glasses-style client profile.*
+*Glasses columns are the glasses-style client profile. Short-term queries stay near-interactive; long-term ones trade latency for temporal coverage.*
 
 ### Long-term memory engine — EM²Mem
 
